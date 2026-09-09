@@ -1,0 +1,43 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "conformance",
+            "type": "lua",
+            "request": "launch",
+            "luaVersion": "lua54",
+            "luaArch": "x86_64",
+            "console": "integratedTerminal",
+            "outputCapture": [
+                "io.write",
+                "print",
+                "stderr",
+            ],
+            "program": "test/conformance.lua",
+            "arg": [
+            ]
+        },
+        {
+            "name": "benchmark",
+            "type": "lua",
+            "request": "launch",
+            "luaVersion": "lua54",
+            "luaArch": "x86_64",
+            "console": "integratedTerminal",
+            "outputCapture": [
+            ],
+            "program": "test/benchmark.lua"
+        },
+        {
+            "name": "edit",
+            "type": "lua",
+            "request": "launch",
+            "luaVersion": "lua54",
+            "luaArch": "x86_64",
+            "console": "integratedTerminal",
+            "outputCapture": [
+            ],
+            "program": "test/edit.lua"
+        }
+    ]
+}

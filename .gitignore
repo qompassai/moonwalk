@@ -1,0 +1,28 @@
+/.vscode/ipch/
+/.vscode/c_cpp_properties.json
+/.vs/
+/publish/
+/build/
+/extension/package.json
+.DS_Store
+.idea/
+/.claude/
+/.cache/
+
+# Local LuaMake build products and release package output.
+build/
+publish/
+
+# Native build outputs.
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+
+# Distribution archives.
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.vsix
