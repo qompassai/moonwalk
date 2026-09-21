@@ -1,12 +1,11 @@
 local function dofile(filename)
     local f = assert(io.open(filename))
-    local str = f:read "a"
+    local str = f:read('a')
     f:close()
-    return assert(load(str, "=(debugger.lua)"))(filename)
+    return assert(load(str, '=(debugger.lua)'))(filename)
 end
 
-local path = os.getenv "LUA_DEBUG_PATH"
+local path = os.getenv('LUA_DEBUG_PATH')
 if path then
-    return dofile(path .. "/script/debugger.lua")
-        : attach {}
+    return dofile(path .. '/script/debugger.lua'):attach({})
 end

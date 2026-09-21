@@ -1,2 +1,2 @@
-require "debugger" : event "wait"
-print "hello thread"
+require('debugger'):event('wait')
+print('hello thread')

@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "lua-debug"
+title: "moonwalk"
 message: "If you use this software, please cite it as below."
 authors:
   - family-names: "Porter"
@@ -8,7 +8,7 @@ authors:
     affiliation: "Qompass AI"
 version: "v2026-09-10"
 date-released: "2026-09-10"
-repository-code: "https://github.com/qompassai/lua-debug"
+repository-code: "https://github.com/qompassai/moonwalk"
 license: "Q-CDA-1.0"
 keywords:
   - AI
@@ -19,4 +19,4 @@ keywords:
   - config
   - lua
   - neovim
-abstract: "Qompass AI Lua-Debug"
+abstract: "Qompass AI MoonWalk"

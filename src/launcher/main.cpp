@@ -56,8 +56,9 @@ namespace luadebug::autoattach {
 #endif
         if (lua::pcall(L, 2, 1, 0)) {
             /*
-                这里失败无法调用log::fatal，因为无法知道调试器已经加载到哪一步才失败的。
-                所以调试器不应该把错误抛到这里。
+                A failure here cannot call log::fatal because it is not possible
+                to know which debugger-loading step failed. The debugger must
+                therefore handle its errors internally rather than throw here.
             */
             log::error("{}", lua::tostring(L, -1));
             lua::pop(L, 1);

@@ -12,7 +12,7 @@ local function searchDebugger(luaDebugs, tag)
     local command = isWindows and ('dir /B ' .. extensionPath:gsub('/', '\\') .. ' 2>nul')
         or ('ls -1 ' .. extensionPath .. ' 2>/dev/null')
     for name in io.popen(command):lines() do
-        local a, b, c = name:match('^actboy168%.lua%-debug%-(%d+)%.(%d+)%.(%d+)')
+        local a, b, c = name:match('^qompassai%.moon%walk%-(%d+)%.(%d+)%.(%d+)')
         if a then
             luaDebugs[#luaDebugs + 1] = { a * 10000 + b * 100 + c, extensionPath .. '/' .. name }
         end
@@ -24,7 +24,7 @@ local function getLatestDebugger()
     searchDebugger(luaDebugs, '')
     searchDebugger(luaDebugs, '-server')
     if #luaDebugs == 0 then
-        error('Cant find `actboy168.lua-debug`')
+        error('Cant find `qompassai.moonwalk`')
     end
     table.sort(luaDebugs, function(a, b)
         return a[1] == b[1] and a[2] > b[2] or a[1] > b[1]

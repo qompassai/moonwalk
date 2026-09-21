@@ -1,3 +1,4 @@
+#!/usr/bin/env lua5.4
 local lm = require('luamake')
 local platform = require('bee.platform')
 lm.builddir = ('build/test/%s'):format(lm.mode)

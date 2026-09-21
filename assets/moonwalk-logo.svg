@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" aria-labelledby="title description" role="img" viewBox="0 0 1024 1024">
+  <title id="title">Moonwalk debugger logo</title>
+  <desc id="description">A clean cyan and electric blue crescent with three reverse execution trace markers on a dark navy background.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#020817"/>
+      <stop offset="1" stop-color="#06142b"/>
+    </linearGradient>
+    <linearGradient id="cyanBlue" x1="0.18" x2="0.84" y1="0.08" y2="0.94">
+      <stop offset="0" stop-color="#23f2e9"/>
+      <stop offset="0.52" stop-color="#09cbed"/>
+      <stop offset="1" stop-color="#1768ff"/>
+    </linearGradient>
+    <filter height="180%" id="glow" width="180%" x="-40%" y="-40%">
+      <feGaussianBlur result="soft" stdDeviation="18"/>
+      <feMerge>
+        <feMergeNode in="soft"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect fill="url(#background)" height="1024" rx="128" width="1024"/>
+
+  
+  <path d="M748 215C617 109 415 129 308 260C179 418 215 647 390 760C495 829 632 815 722 735C604 786 459 743 390 637C311 516 337 355 451 266C539 198 660 187 748 215Z" fill="url(#cyanBlue)" filter="url(#glow)"/>
+
+  
+  <path d="M318 613C408 500 548 450 698 474" fill="none" filter="url(#glow)" stroke="url(#cyanBlue)" stroke-linecap="round" stroke-width="28"/>
+
+  
+  <circle cx="434" cy="508" fill="#10cfee" r="20"/>
+  <circle cx="558" cy="469" fill="#12c5f0" r="29"/>
+  <circle cx="698" cy="474" fill="#20e8ec" filter="url(#glow)" r="43"/>
+</svg>

@@ -1,17 +1,17 @@
-local thread = require "bee.thread"
-local channel = require "bee.channel"
+local thread = require('bee.thread')
+local channel = require('bee.channel')
 
 local m = {}
 
 local function hasMaster()
-    return channel.query "DbgMaster" ~= nil
+    return channel.query('DbgMaster') ~= nil
 end
 
 local function initMaster(rootpath, address)
     if hasMaster() then
         return
     end
-    local chan = channel.create "DbgMaster"
+    local chan = channel.create('DbgMaster')
     thread.create(([[
         local rootpath = %q
         package.path = rootpath.."/script/?.lua"
@@ -26,16 +26,13 @@ local function initMaster(rootpath, address)
         if not ok then
             log.error("ERROR:" .. err)
         end
-    ]]):format(
-        rootpath,
-        address
-    ))
+    ]]):format(rootpath, address))
 end
 
 local function startWorker(rootpath)
-    local log = require 'common.log'
-    log.file = rootpath..'/worker.log'
-    require 'backend.worker'
+    local log = require('common.log')
+    log.file = rootpath .. '/worker.log'
+    require('backend.worker')
 end
 
 function m.start(rootpath, address)

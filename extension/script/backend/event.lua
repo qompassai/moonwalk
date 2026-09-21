@@ -13,9 +13,9 @@ end
 function ev.on(name, f)
     local event = _events[name]
     if event then
-        event[#event+1] = f
+        event[#event + 1] = f
     else
-        _events[name] = {f}
+        _events[name] = { f }
     end
 end
 

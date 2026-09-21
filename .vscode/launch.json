@@ -1,41 +1,40 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "lua",
-            "request": "launch",
-            "name": "Test Client",
-            "console": "integratedTerminal",
-            "luaVersion": "lua-latest",
-            "windows": {
-                "luaexe": "${extensionInstallFolder:actboy168.lua-debug}/bin/lua-debug.exe"
-            },
-            "linux": {
-                "luaexe": "${extensionInstallFolder:actboy168.lua-debug}/bin/lua-debug",
-            },
-            "osx": {
-                "luaexe": "${extensionInstallFolder:actboy168.lua-debug}/bin/lua-debug",
-            },
-            "outputCapture": [
-            ],
-            "program": "",
-            "path": null,
-            "cpath": null,
-            "arg": [
-                "4711"
-            ]
-        },
-        {
-            "type": "extensionHost",
-            "request": "launch",
-            "name": "Test Extension",
-            "runtimeExecutable": "${execPath}",
-            "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}/extension/"
-            ],
-            "env": {
-                "VSCODE_EXTENSION_PATH" : "${extensionInstallFolder:actboy168.lua-debug}"
-            }
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lua",
+      "request": "launch",
+      "name": "Test Client",
+      "console": "integratedTerminal",
+      "luaVersion": "lua-latest",
+      "windows": {
+        "luaexe": "${extensionInstallFolder:qompassai.moonwalk}/bin/moonwalk.exe"
+      },
+      "linux": {
+        "luaexe": "${extensionInstallFolder:qompassai.moonwalk}/bin/moonwalk"
+      },
+      "osx": {
+        "luaexe": "${extensionInstallFolder:qompassai.moonwalk}/bin/moonwalk"
+      },
+      "outputCapture": [],
+      "program": "",
+      "path": null,
+      "cpath": null,
+      "arg": [
+        "4711"
+      ]
+    },
+    {
+      "type": "extensionHost",
+      "request": "launch",
+      "name": "Test Extension",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/extension/"
+      ],
+      "env": {
+        "VSCODE_EXTENSION_PATH": "${extensionInstallFolder:qompassai.moonwalk}"
+      }
+    }
+  ]
 }

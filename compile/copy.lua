@@ -1,3 +1,4 @@
+#!/usr/bin/env lua5.4
 package.path = package.path .. ';3rd/json.lua/?.lua'
 local fs = require('bee.filesystem')
 local OS = require('bee.platform').os
