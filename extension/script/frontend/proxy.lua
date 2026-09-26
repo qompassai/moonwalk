@@ -131,6 +131,23 @@ local function check_launch_args(pkg)
     then
         return nil, 'missing `program` for launch.'
     end
+    -- An empty program, or an absolute path that does not exist, is a
+    -- certain launch failure; the backend would otherwise report success
+    -- and wedge. (Relative paths are resolved against the debuggee cwd at
+    -- spawn time, so they cannot be checked here.)
+    if args.request == 'launch' and type(args.program) == 'string' then
+        if args.program == '' then
+            return nil, '`program` is empty.'
+        end
+        if args.program:sub(1, 1) == '/' then
+            local f = io.open(args.program, 'r')
+            if f then
+                f:close()
+            else
+                return nil, ('`program` does not exist: %s'):format(args.program)
+            end
+        end
+    end
     if args.processId ~= nil then
         local pid = args.processId
         if type(pid) ~= 'number' or pid <= 0 or pid ~= math.floor(pid) then
@@ -174,15 +191,41 @@ local function response_error(req, msg)
 end
 
 ---@param args table `runInTerminal` arguments built by debuger_factory.
-local function request_runinterminal(args)
+---@param args table runInTerminal arguments for the client.
+---@param launch_pkg table The original DAP launch request to answer on failure.
+local function request_runinterminal(args, launch_pkg)
     reverse_seq = reverse_seq + 1
-    pending_terminal[reverse_seq] = true
+    -- Remember the launch request so a terminal failure (or timeout) can
+    -- answer it instead of leaving the client hanging forever.
+    pending_terminal[reverse_seq] = {
+        pkg = launch_pkg,
+        sent_at = os.time(),
+    }
     client.sendmsg({
         type = 'request',
         seq = reverse_seq,
         command = 'runInTerminal',
         arguments = args,
     })
+end
+
+-- Seconds before an unanswered runInTerminal is treated as failed.
+local TERMINAL_TIMEOUT = 30
+
+---Answer timed-out runInTerminal requests with a launch error and tear down.
+local function reap_terminal_timeouts()
+    local now = os.time()
+    for seq, pending in pairs(pending_terminal) do
+        if now - pending.sent_at >= TERMINAL_TIMEOUT then
+            pending_terminal[seq] = nil
+            response_error(pending.pkg, '`runInTerminal` timed out: client did not respond within 30s.')
+            if server then
+                server.closeall()
+                server = nil
+            end
+            os.exit(0, true)
+        end
+    end
 end
 
 ---@param pkg table DAP attach request.
@@ -266,6 +309,12 @@ end
 ---@return boolean? started True when the terminal launch was requested.
 local function proxy_launch_terminal(pkg)
     local args = pkg.arguments
+    -- The client must support runInTerminal; without the capability the
+    -- reverse request goes nowhere and the launch hangs forever.
+    if not (initReq and initReq.arguments and initReq.arguments.supportsRunInTerminalRequest) then
+        response_error(pkg, 'Client does not support `runInTerminal`.')
+        return
+    end
     if args.runtimeExecutable then
         if args.inject ~= 'none' then
             --TODO: support inject's integratedTerminal/externalTerminal
@@ -278,7 +327,7 @@ local function proxy_launch_terminal(pkg)
             response_error(pkg, err)
             return
         end
-        request_runinterminal(arguments)
+        request_runinterminal(arguments, pkg)
         return true
     else
         local address
@@ -289,7 +338,7 @@ local function proxy_launch_terminal(pkg)
             response_error(pkg, err)
             return
         end
-        request_runinterminal(arguments)
+        request_runinterminal(arguments, pkg)
         return true
     end
 end
@@ -387,17 +436,21 @@ local function send(pkg)
         if pkg.type == 'response' and pkg.command == 'runInTerminal' then
             local seq = pkg.request_seq
 
-            if pending_terminal[seq] then
+            local pending = pending_terminal[seq]
+            if pending then
                 pending_terminal[seq] = nil
 
                 if not pkg.success then
                     -- The client could not start the terminal: the backend
                     -- is waiting for a debuggee that will never connect.
-                    -- Tear the session down instead of hanging; closing the
-                    -- backend connection ends the adapter process, which
-                    -- ends the client's debug session.
-                    server.closeall()
-                    server = nil
+                    -- Answer the launch request (the client has been
+                    -- hanging on it), then tear down instead of spinning.
+                    response_error(pending.pkg, '`runInTerminal` failed: client reported success:false.')
+                    if server then
+                        server.closeall()
+                        server = nil
+                    end
+                    os.exit(0, true)
                 end
             end
 
@@ -486,6 +539,8 @@ function m.update()
             break
         end
     end
+    reap_terminal_timeouts()
+
     -- Detach case: the debug session is over but the backend (and the
     -- detached debuggee) live on. The frontend must exit now; the debuggee
     -- is disowned (not killed, not reaped) so init reparents and reaps it.

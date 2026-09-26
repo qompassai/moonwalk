@@ -93,6 +93,19 @@ function mgr.clientSend(pkg)
     socket.sendmsg(pkg)
 end
 
+---Pump the client socket once to flush buffered sends. Call before os.exit()
+---when a response must reach the client: the send is buffered, and exiting
+---without pumping discards it.
+function mgr.flushClient()
+    if not initialized then
+        return
+    end
+    -- Multiple pumps: the first moves the message to the OS buffer, the
+    -- second ensures it is handed off. Cheap and bounded.
+    socket.update(0)
+    socket.update(0)
+end
+
 function mgr.workerSend(w, msg)
     return threadChannel[w]:push(msg)
 end

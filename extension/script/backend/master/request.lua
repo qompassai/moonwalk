@@ -419,6 +419,10 @@ function request.disconnect(req)
             cmd = 'suspend',
         })
     elseif args.terminateDebuggee then
+        -- Flush the success response before exiting: the socket send is
+        -- buffered, and os.exit() would discard it, leaving the client
+        -- hanging on a disconnect that will never be answered.
+        mgr.flushClient()
         if closeProcess then
             mgr.setTerminateDebuggeeCallback(function()
                 os.exit(true, true)
