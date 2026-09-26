@@ -299,10 +299,23 @@ end
 local function proxy_launch_console(pkg)
     local args = pkg.arguments
     if args.runtimeExecutable then
-        if args.inject == 'none' and args.address == nil then
+        -- Diver (and other clients) may supply `runtimeExecutable` (an
+        -- external Lua interpreter) without `inject` or `address`, meaning
+        -- "run the program with this interpreter under the debugger".
+        -- Route it through the normal bootstrap path by treating the
+        -- runtime as the Lua executable; the debuggee connects back via
+        -- the socket rendezvous. Without this, a nil `inject` falls into
+        -- the injection path and fails with "Inject (use nil) is not
+        -- supported."
+        if args.inject == nil and args.address == nil then
+            args.luaexe = args.runtimeExecutable
+            args.runtimeExecutable = nil
+        elseif args.inject == 'none' and args.address == nil then
             response_error(pkg, '`runtimeExecutable` need specify `inject` or `address`.')
             return
         end
+    end
+    if args.runtimeExecutable then
         local process, err = debuger_factory.create_process_in_console(args, function(process)
             local address
             server, address = create_server(args, process:get_id())
