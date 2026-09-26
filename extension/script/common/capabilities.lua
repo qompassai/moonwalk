@@ -1,3 +1,11 @@
+-- common/capabilities.lua
+--
+-- The DAP capability advertisement this debugger reports to the client.
+--
+-- Every key in this table is a protocol string consumed by the VS Code
+-- front end (or by `docs/debugProtocol.json`); they must stay byte-exact.
+-- Only the human-facing `description` prose may be edited, never the keys.
+
 return {
     supportsConfigurationDoneRequest = true,
     supportsFunctionBreakpoints = true,
@@ -80,8 +88,8 @@ return {
             filter = 'panic',
             label = 'Uncaught Errors',
             supportsCondition = true,
-            description = 'Breaks only on errors that are nor handled.',
+            description = 'Breaks only on errors that are not handled.',
             conditionDescription = 'error:match "attempt to index a nil value"',
-        }
-    }
+        },
+    },
 }

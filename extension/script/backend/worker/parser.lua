@@ -1,17 +1,34 @@
-local undump = require 'backend.worker.undump'
+-- backend/worker/parser.lua
+--
+-- Builds the line maps the worker uses to verify breakpoints: for every
+-- function prototype it records which source lines actually hold executable
+-- code (`activelines`) and which source lines each prototype spans
+-- (`definelines`), then snaps every line to the next executable one. It
+-- works from `string.dump` output parsed by undump.lua, so no debug hooks
+-- are needed -- only the chunk text.
+
+local undump = require('backend.worker.undump')
 
 local version
 
+---@param proto table Undumped function prototype.
+---@param abs table Map of pc -> absolute line for -128 anchors.
+---@param currentline integer Running line number.
+---@param pc integer 0-based program counter.
+---@return integer line Resolved absolute line number.
 local function nextline(proto, abs, currentline, pc)
     local line = proto.lineinfo[pc]
     if line == -128 then
-        return assert(abs[pc-1])
+        return assert(abs[pc - 1])
     else
         return currentline + line
     end
 end
 
+---@param proto table Undumped function prototype.
+---@return table activelines Set of executable line numbers.
 local function getactivelines(proto)
+    assert(version ~= nil)
     local l = {}
     if version >= 0x54 then
         local currentline = proto.linedefined
@@ -42,7 +59,7 @@ local function calclineinfo(proto, lineinfo, si)
     local activelines = getactivelines(proto)
     local startLn = proto.linedefined
     local endLn = proto.lastlinedefined
-    local key = startLn.."-"..endLn
+    local key = startLn .. '-' .. endLn
     if endLn == 0 then
         startLn = 1
         for l in pairs(activelines) do
@@ -84,11 +101,14 @@ local function normalize(lineinfo, si)
     end
 end
 
-return function (content)
+---@param content string Lua chunk text to analyze.
+---@return table? lineinfo Map of line -> next executable line, or nil when
+--- the chunk does not compile.
+return function(content)
     local f, err = load(content)
     if not f then
-        local log = require 'common.log'
-        log.error("ERROR:"..err)
+        local log = require('common.log')
+        log.error('ERROR:' .. err)
         return
     end
     local bin = string.dump(f)

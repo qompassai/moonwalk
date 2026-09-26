@@ -1,3 +1,5 @@
+-- macOS-only harness: spawns the testwaitdll binary with the launcher and
+-- the Lua 5.1 runtime; asserts the subprocess exits 0.
 local platform = require('bee.platform')
 local fs = require('bee.filesystem')
 local sp = require('bee.subprocess')

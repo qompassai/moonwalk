@@ -1,15 +1,22 @@
+-- frontend/main.lua
+--
+-- Adapter entry point: opens the DAP channel to the editor (TCP when a port
+-- is passed on the command line, stdio otherwise), hands it to the proxy,
+-- and pumps messages until the process exits. A top-level xpcall keeps a
+-- crash from vanishing silently -- it lands in client.log instead.
+
 local port = ...
-local sys = require 'bee.sys'
-local socket = require 'common.socket'
-local proxy = require 'frontend.proxy'
+local sys = require('bee.sys')
+local socket = require('common.socket')
+local proxy = require('frontend.proxy')
 local vscode
 WORKDIR = sys.exe_path():parent_path():parent_path()
 
 local function run()
     if port then
-        vscode = socket('listen:127.0.0.1:'..port)
+        vscode = socket('listen:127.0.0.1:' .. port)
     else
-        vscode = require 'frontend.stdio'
+        vscode = require('frontend.stdio')
         --vscode.debug(true)
     end
     proxy.init(vscode)
@@ -19,9 +26,9 @@ local function run()
     end
 end
 
-local log = require 'common.log'
-log.root = (WORKDIR / "script"):string()
-log.file = (WORKDIR / "client.log"):string()
+local log = require('common.log')
+log.root = (WORKDIR / 'script'):string()
+log.file = (WORKDIR / 'client.log'):string()
 
 local ok, errmsg = xpcall(run, debug.traceback)
 if not ok then

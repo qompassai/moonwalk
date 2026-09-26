@@ -1,5 +1,5 @@
-local fs = require 'bee.filesystem'
-local root = fs.absolute(fs.path '.')
+local fs = require('bee.filesystem')
+local root = fs.absolute(fs.path('.'))
 local outputDir = root / 'publish'
 local OVERWRITE <const> = fs.copy_options.overwrite_existing
 
@@ -16,5 +16,5 @@ end
 
 copy_directory(root / 'extension', outputDir)
 
-fs.copy_file(root / "LICENSE",   outputDir / "LICENSE",   OVERWRITE)
-fs.copy_file(root / "README.md", outputDir / "README.md", OVERWRITE)
+fs.copy_file(root / 'LICENSE', outputDir / 'LICENSE', OVERWRITE)
+fs.copy_file(root / 'README.md', outputDir / 'README.md', OVERWRITE)

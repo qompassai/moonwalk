@@ -1,3 +1,10 @@
+-- backend/bootstrap.lua
+--
+-- Entry point for the debugger backend. The backend has two roles: a single
+-- master thread that speaks DAP to the editor, and one worker thread per
+-- debugged Lua state. `start` boots both for a fresh session; `attach` joins
+-- an already-running master when the debuggee shows up late.
+
 local thread = require('bee.thread')
 local channel = require('bee.channel')
 
@@ -11,7 +18,9 @@ local function initMaster(rootpath, address)
     if hasMaster() then
         return
     end
-    local chan = channel.create('DbgMaster')
+    -- The create call only registers the channel name so late workers can
+    -- attach; the handle itself is owned by the spawned master thread.
+    channel.create('DbgMaster')
     thread.create(([[
         local rootpath = %q
         package.path = rootpath.."/script/?.lua"
@@ -35,11 +44,14 @@ local function startWorker(rootpath)
     require('backend.worker')
 end
 
+---@param rootpath string Absolute path of the extension script root.
+---@param address string Address the master socket listens on.
 function m.start(rootpath, address)
     initMaster(rootpath, address)
     startWorker(rootpath)
 end
 
+---@param rootpath string Absolute path of the extension script root.
 function m.attach(rootpath)
     if hasMaster() then
         startWorker(rootpath)

@@ -1,11 +1,11 @@
-local fs = require "bee.filesystem"
-local sp = require "bee.subprocess"
+local fs = require('bee.filesystem')
+local sp = require('bee.subprocess')
 local sourcefile = {}
 local EXTENSION <const> = {
-    [".h"] = true,
-    [".inl"] = true,
-    [".c"] = true,
-    [".cpp"] = true,
+    ['.h'] = true,
+    ['.inl'] = true,
+    ['.c'] = true,
+    ['.cpp'] = true,
 }
 
 local function scan(dir)
@@ -21,18 +21,21 @@ local function scan(dir)
     end
 end
 
-scan "src"
+scan('src')
 
 if #sourcefile > 0 then
-    local process = assert(sp.spawn {
-        "luamake", "shell", "clang-format",
-        "-i", sourcefile,
+    local process = assert(sp.spawn({
+        'luamake',
+        'shell',
+        'clang-format',
+        '-i',
+        sourcefile,
         stdout = true,
-        stderr = "stdout",
+        stderr = 'stdout',
         searchPath = true,
-    })
+    }))
     for line in process.stdout:lines() do
-        io.write(line, "\n")
+        io.write(line, '\n')
         io.flush()
     end
     process.stdout:close()

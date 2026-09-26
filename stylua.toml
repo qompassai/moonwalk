@@ -1,0 +1,11 @@
+# stylua configuration for moonwalk.
+#
+# Quote style follows the repo convention (single quotes everywhere) and
+# Matt's Tiger Style Lua guide, which pins `quote_style = "AutoPreferSingle"`.
+# 4-space indent and 100-column width match the guide's formatting section.
+column_width = 100
+indent_type = "Spaces"
+indent_width = 4
+quote_style = "AutoPreferSingle"
+call_parentheses = "Always"
+collapse_simple_statement = "Never"

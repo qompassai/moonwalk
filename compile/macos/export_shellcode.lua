@@ -8,10 +8,10 @@ for line in io.lines(input) do
             stats = 1
         end
     else
-        if line:sub(1, 6):match "^ [0-9a-f][0-9a-f][0-9a-f][0-9a-f] $" then
+        if line:sub(1, 6):match('^ [0-9a-f][0-9a-f][0-9a-f][0-9a-f] $') then
             local hexstring = line:sub(7, 7 + 9 * 4)
-            for hex in hexstring:gmatch "[0-9a-f][0-9a-f]" do
-                result[#result + 1] = "\\x" .. hex
+            for hex in hexstring:gmatch('[0-9a-f][0-9a-f]') do
+                result[#result + 1] = '\\x' .. hex
             end
         else
             if line ~= 'Contents of section __TEXT,__cstring:' then
@@ -20,14 +20,14 @@ for line in io.lines(input) do
         end
     end
     if line == 'Contents of section __TEXT,__stubs:' then
-        io.stderr:write("please chek shellcode find the dependency on external functions\n")
+        io.stderr:write('please chek shellcode find the dependency on external functions\n')
         os.exit(1)
     end
 end
 
-local f <close> = assert(output and io.open(output, "w") or io.stdout)
-f:write("const char inject_code[] = {\n")
+local f <close> = assert(output and io.open(output, 'w') or io.stdout)
+f:write('const char inject_code[] = {\n')
 f:write('"')
 f:write(table.concat(result))
 f:write('"\n')
-f:write("};\n")
+f:write('};\n')

@@ -1,3 +1,12 @@
+-- extension/script/bootstrap.lua
+--
+-- Entry point for the standalone debugger frontend process.
+--
+-- Derives the extension root from `package.cpath`, points `package.path`
+-- at the bundled scripts, honors a single `-e <expr>` command-line
+-- expression (evaluated before startup), drops empty arguments, then hands
+-- control to `frontend/main.lua` with the remaining arguments.
+
 local root
 do
     local pattern = '[/][^/]+'

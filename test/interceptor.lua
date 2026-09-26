@@ -1,3 +1,5 @@
+-- Finds every test binary under the build tree and runs each one as a
+-- subprocess; the process exits non-zero if any test fails or cannot run.
 local fs = require('bee.filesystem')
 local sp = require('bee.subprocess')
 
@@ -9,7 +11,9 @@ local function find_directory_test(dir)
         else
             local filename = file:filename()
             local ext = file:extension()
-            if tostring(filename):find('test_') and (ext:find('.exe') or ext == '' or ext == nil) then
+            local is_test = tostring(filename):find('test_')
+                and (ext:find('.exe') or ext == '' or ext == nil)
+            if is_test then
                 table.insert(all_tests, tostring(file))
             end
         end

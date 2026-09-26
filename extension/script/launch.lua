@@ -1,5 +1,14 @@
-local path = debug.getinfo(1, 'S').source:sub(2):match('(.+)[/\\][%w_.-]+$'):match('(.+)[/\\][%w_.-]+$')
+-- launch.lua
+--
+-- Debuggee-side bootstrap: runs as `lua -e 'dofile[[...]] DBG[[...]]'` inside
+-- the target process. Loads debugger.lua, then waits for the `DBG` rendezvous
+-- argument, which carries the backend address (or a pid for the unix-socket
+-- form), an optional `ansi` marker, and the Lua version tag.
 
+local src = debug.getinfo(1, 'S').source:sub(2)
+local path = src:match('(.+)[/\\][%w_.-]+$'):match('(.+)[/\\][%w_.-]+$')
+
+---@param filename string Absolute path of debugger.lua to load and run.
 local function dofile(filename)
     local load = _VERSION == 'Lua 5.1' and loadstring or load
     local f = assert(io.open(filename))
@@ -8,6 +17,8 @@ local function dofile(filename)
     return assert(load(str, '=(debugger.lua)'))(filename)
 end
 local dbg = dofile(path .. '/script/debugger.lua')
+
+---@param str string Rendezvous argument: address/pid, optional ansi, lua version.
 dbg:set_wait('DBG', function(str)
     local params = {}
     str:gsub('[^/]+', function(w)

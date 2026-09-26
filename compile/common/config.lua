@@ -1,11 +1,11 @@
-local lm = require "luamake"
+local lm = require('luamake')
 
-lm.compile_commands = "build"
-lm.c = "c11"
-lm.cxx = "c++17"
+lm.compile_commands = 'build'
+lm.c = 'c11'
+lm.cxx = 'c++17'
 
-lm.mode = "debug"
+lm.mode = 'debug'
 
 lm.msvc = {
-    flags = "/wd5105"
+    flags = '/wd5105',
 }

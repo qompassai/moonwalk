@@ -1,18 +1,25 @@
-local rdebug = require 'luadebug.visitor'
-local fs = require 'backend.worker.filesystem'
-local source = require 'backend.worker.source'
-local eval = require 'backend.worker.eval'
-local ev = require 'backend.event'
-local hookmgr = require 'luadebug.hookmgr'
-local parser = require 'backend.worker.parser'
-local stdout = require 'backend.worker.stdout'
+-- backend/worker/breakpoint.lua
+--
+-- Breakpoint bookkeeping on the debuggee side: tracks verified/unverified
+-- breakpoints per source, snaps requested lines to executable ones via
+-- parser.lua line maps, and evaluates hit conditions / log points with the
+-- read-only evaluator.
+
+local rdebug = require('luadebug.visitor')
+local fs = require('backend.worker.filesystem')
+local source = require('backend.worker.source')
+local eval = require('backend.worker.eval')
+local ev = require('backend.event')
+local hookmgr = require('luadebug.hookmgr')
+local parser = require('backend.worker.parser')
+local stdout = require('backend.worker.stdout')
 
 local currentactive = {}
 local waitverify = {}
 local info = {}
-local instbreakpoints = {}  -- {[proto] = {[pc] = bp}}
-local protosById = {}       -- {["{ld}_{lld}_{srcId}"] = proto}
-local waitinstbp = {}       -- {[funcId] = {[pc] = bp}}
+local instbreakpoints = {} -- {[proto] = {[pc] = bp}}
+local protosById = {} -- {["{ld}_{lld}_{srcId}"] = proto}
+local waitinstbp = {} -- {[funcId] = {[pc] = bp}}
 local m = {}
 local enable = false
 
@@ -48,7 +55,7 @@ local function bpKey(src)
     end
     local path = fs.path_native(fs.path_normalize(src.path))
     if src.startline then
-        return path..":"..src.startline
+        return path .. ':' .. src.startline
     end
     return path
 end
@@ -104,7 +111,7 @@ local function updateBreakpoint(src, breakpoints)
 end
 
 local function NormalizeErrorMessage(what, err)
-    return ("%s: %s."):format(what, err:gsub("^:%d+: %(EVAL%):%d+: (.*)$", "%1"))
+    return ('%s: %s.'):format(what, err:gsub('^:%d+: %(EVAL%):%d+: (.*)$', '%1'))
 end
 
 local function setBreakPointUnverified(bp, errmsg)
@@ -120,14 +127,14 @@ local function valid(bp)
     if bp.condition then
         local ok, err = eval.verify(bp.condition)
         if not ok then
-            setBreakPointUnverified(bp, NormalizeErrorMessage("Condition Error", err))
+            setBreakPointUnverified(bp, NormalizeErrorMessage('Condition Error', err))
             return false
         end
     end
     if bp.hitCondition then
-        local ok, err = eval.verify('0 '..bp.hitCondition)
+        local ok, err = eval.verify('0 ' .. bp.hitCondition)
         if not ok then
-            setBreakPointUnverified(bp, NormalizeErrorMessage("HitCondition Error", err))
+            setBreakPointUnverified(bp, NormalizeErrorMessage('HitCondition Error', err))
             return false
         end
     end
@@ -151,7 +158,7 @@ local function verifyBreakpoint(breakpoints)
                 bp.statLog[key] = str:sub(2, -2)
                 return key
             end)
-            bp.statLog[1] = bp.statLog[1]..'\n'
+            bp.statLog[1] = bp.statLog[1] .. '\n'
         end
         ::continue::
     end
@@ -184,7 +191,8 @@ local function verifyBreakpointByLineInfo(src, breakpoints)
     end
 end
 
--- 降级模式：无 lineinfo 时跳过行号校正，直接标记断点为 verified
+-- Degraded mode: without lineinfo, skip line correction and mark
+-- the breakpoint verified directly.
 local function verifyBreakpointWithoutLineInfo(src, breakpoints)
     for _, bp in ipairs(breakpoints) do
         if bp.unverified ~= nil then
@@ -218,25 +226,37 @@ local function parserInlineLineinfo(src)
     local new = {}
     local diff = src.startline - 1
     for k, v in pairs(old) do
-        if type(k) == "number" then
+        if type(k) == 'number' then
             new[k + diff] = v + diff
         else
             local newv = {}
-            for l in pairs(v) do newv[l + diff] = true end
-            if k == "0-0" then
+            for l in pairs(v) do
+                newv[l + diff] = true
+            end
+            if k == '0-0' then
                 new[k] = newv
             else
-                local s, e = k:match "^(%d+)-(%d+)$"
+                local s, e = k:match('^(%d+)-(%d+)$')
                 s = tonumber(s) + 1
                 e = tonumber(e) + 1
-                new[("%d-%d"):format(s, e)] = newv
+                new[('%d-%d'):format(s, e)] = newv
             end
         end
     end
     return new
 end
 
+---@param src table Pooled source record.
+---@param content string?|false Editor-supplied text for `src`.
+---@return table? lineinfo Parsed line map, or nil when unavailable.
 local function calcLineInfo(src, content)
+    -- The editor resends breakpoints with fresh text after every edit; the
+    -- cached lineinfo must follow the content it was parsed from, otherwise
+    -- breakpoints silently stick to lines of a stale revision.
+    local contentKey = src.content or content
+    if src.lineinfo and src.lineinfoContent ~= contentKey then
+        src.lineinfo = nil
+    end
     if not src.lineinfo then
         if src.content then
             src.lineinfo = parserInlineLineinfo(src)
@@ -245,13 +265,14 @@ local function calcLineInfo(src, content)
         elseif src.sourceReference then
             src.lineinfo = parser(source.getCode(src.sourceReference))
         end
+        src.lineinfoContent = contentKey
     end
     return src.lineinfo
 end
 
 local function cantVerifyBreakpoints(breakpoints)
     for _, bp in ipairs(breakpoints) do
-        setBreakPointUnverified(bp, "The source file has no line information.")
+        setBreakPointUnverified(bp, 'The source file has no line information.')
     end
 end
 
@@ -272,7 +293,8 @@ function m.set_bp(clientsrc, breakpoints, content)
                 updateBreakpoint(src, breakpoints)
             end
         elseif content == false then
-            -- 降级路径：前端已上报但 sourceContent 为空
+            -- Degraded path: the frontend already reported it but
+            -- sourceContent is empty
             for _, src in ipairs(srcarray) do
                 verifyBreakpointWithoutLineInfo(src, breakpoints)
                 updateBreakpoint(src, breakpoints)
@@ -300,24 +322,24 @@ function m.exec(bp)
     end
     bp.statHit = bp.statHit + 1
     if bp.hitCondition then
-        local ok, res = eval.eval(bp.statHit..' '..bp.hitCondition)
+        local ok, res = eval.eval(bp.statHit .. ' ' .. bp.hitCondition)
         if not ok or res ~= true then
             return false
         end
     end
     if bp.statLog then
         local res = bp.statLog[1]:gsub('{%d+}', function(key)
-            local info = bp.statLog[key]
-            if not info then
+            local logEntry = bp.statLog[key]
+            if not logEntry then
                 return key
             end
-            local ok, res = eval.eval(info)
+            local ok, res = eval.eval(logEntry)
             if not ok then
-                return '{'..info..'}'
+                return '{' .. logEntry .. '}'
             end
             return tostring(res)
         end)
-        rdebug.getinfo(0, "Sl", info)
+        rdebug.getinfo(0, 'Sl', info)
         stdout(res, info)
         return false
     end
@@ -327,7 +349,7 @@ end
 function m.newproto(proto, src, key)
     src.protos[proto] = key
     if rdebug.currentpc then
-        local funcId = key .. "_" .. bpClientKey(src)
+        local funcId = key .. '_' .. bpClientKey(src)
         protosById[funcId] = proto
         local pending = waitinstbp[funcId]
         if pending then
@@ -355,7 +377,8 @@ function m.newproto(proto, src, key)
         end
         if not calcLineInfo(src, wv.content) then
             if wv.content == false then
-                -- 降级路径：前端已上报但 sourceContent 为空
+                -- Degraded path: the frontend already reported it but
+                -- sourceContent is empty
                 verifyBreakpointWithoutLineInfo(src, wv.breakpoints)
                 updateBreakpoint(src, wv.breakpoints)
                 return
@@ -376,7 +399,7 @@ function m.set_funcbp(breakpoints)
     for _, bp in ipairs(breakpoints) do
         local ok, err = eval.verify(bp.name)
         if not ok then
-            setBreakPointUnverified(bp, NormalizeErrorMessage("Error", err))
+            setBreakPointUnverified(bp, NormalizeErrorMessage('Error', err))
             goto continue
         end
         if not valid(bp) then
@@ -439,7 +462,7 @@ function m.setExceptionBreakpoints(breakpoints)
         end
         local ok, err = eval.verify(filter.condition)
         if not ok then
-            setBreakPointUnverified(filter, NormalizeErrorMessage("Error", err))
+            setBreakPointUnverified(filter, NormalizeErrorMessage('Error', err))
             goto continue
         end
         exceptionFilters[filter.filterId] = {
@@ -463,18 +486,18 @@ function m.set_instbp(breakpoints)
     waitinstbp = {}
     -- add new breakpoints
     for _, bp in ipairs(breakpoints) do
-        local ld, lld, pc, srcId = bp.instructionReference:match("^bp_(%d+)_(%d+)_(%d+)_(.+)$")
+        local ld, lld, pc, srcId = bp.instructionReference:match('^bp_(%d+)_(%d+)_(%d+)_(.+)$')
         if not ld then
             bp.message = nil
-            setBreakPointUnverified(bp, "Invalid instruction reference")
+            setBreakPointUnverified(bp, 'Invalid instruction reference')
             goto continue
         end
         pc = tonumber(pc) + (bp.offset or 0)
-        local funcId = ld .. "-" .. lld .. "_" .. srcId
+        local funcId = ld .. '-' .. lld .. '_' .. srcId
         local proto = protosById[funcId]
         if not proto then
             bp.message = nil
-            setBreakPointUnverified(bp, "Function not yet loaded")
+            setBreakPointUnverified(bp, 'Function not yet loaded')
             waitinstbp[funcId] = waitinstbp[funcId] or {}
             waitinstbp[funcId][pc] = bp
             goto continue

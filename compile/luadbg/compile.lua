@@ -1,4 +1,11 @@
+-- Compiles the Lua headers into a renamed side-by-side copy (luadbg build
+-- step), so two Lua versions can coexist without symbol clashes.
+-- Usage: lua compile.lua <newname> <luapath> <outpath>
 local newname, luapath, outpath = ...
+
+assert(type(newname) == 'string' and newname ~= '')
+assert(type(luapath) == 'string' and luapath ~= '')
+assert(type(outpath) == 'string' and outpath ~= '')
 
 local NEWNAME <const> = newname:upper()
 
@@ -6,44 +13,44 @@ local function lua_exports()
     local exports = {}
     local marcos = {}
     local function search_marco(line)
-        local marco = line:match "^%s*#define%s+([lL][uU][aA][%w_]+)"
-        if marco and not marco:match "_h$" and not marco:match "^LUA_USE_" then
-            marcos[#marcos+1] = marco
+        local marco = line:match('^%s*#define%s+([lL][uU][aA][%w_]+)')
+        if marco and not marco:match('_h$') and not marco:match('^LUA_USE_') then
+            marcos[#marcos + 1] = marco
         end
     end
-    for line in io.lines(luapath.."lua.h") do
-        local api = line:match "^%s*LUA_API[%w%s%*_]+%(([%w_]+)%)"
+    for line in io.lines(luapath .. 'lua.h') do
+        local api = line:match('^%s*LUA_API[%w%s%*_]+%(([%w_]+)%)')
         if api then
-            exports[#exports+1] = api
+            exports[#exports + 1] = api
         else
             search_marco(line)
         end
     end
-    for line in io.lines(luapath.."lauxlib.h") do
-        local api = line:match "^%s*LUALIB_API[%w%s%*_]+%(([%w_]+)%)"
+    for line in io.lines(luapath .. 'lauxlib.h') do
+        local api = line:match('^%s*LUALIB_API[%w%s%*_]+%(([%w_]+)%)')
         if api then
-            exports[#exports+1] = api
+            exports[#exports + 1] = api
         else
             search_marco(line)
         end
     end
-    ---@TODO: lua55的临时处理
-    exports[#exports+1] = "luaL_alloc"
+    ---@TODO: temporary workaround for lua55
+    exports[#exports + 1] = 'luaL_alloc'
 
-    for line in io.lines(luapath.."lualib.h") do
-        local api = line:match "^%s*LUALIB_API[%w%s%*_]+%(([%w_]+)%)"
+    for line in io.lines(luapath .. 'lualib.h') do
+        local api = line:match('^%s*LUALIB_API[%w%s%*_]+%(([%w_]+)%)')
         if api then
-            exports[#exports+1] = api
+            exports[#exports + 1] = api
         else
-            local api = line:match "^%s*LUAMOD_API[%w%s%*_]+%(([%w_]+)%)"
-            if api then
-                exports[#exports+1] = api
+            local mod_api = line:match('^%s*LUAMOD_API[%w%s%*_]+%(([%w_]+)%)')
+            if mod_api then
+                exports[#exports + 1] = mod_api
             else
                 search_marco(line)
             end
         end
     end
-    for line in io.lines(luapath.."luaconf.h") do
+    for line in io.lines(luapath .. 'luaconf.h') do
         search_marco(line)
     end
     table.sort(exports)
@@ -51,84 +58,83 @@ local function lua_exports()
 end
 
 local function compile(v)
-    return v
-        :gsub("lua", newname)
-        :gsub("LUA", NEWNAME)
-        :gsub("l_", newname.."_")
-        :gsub("CallInfo", newname.."CallInfo")
-        :gsub("lauxlib", newname.."auxlib")
+    return v:gsub('lua', newname)
+        :gsub('LUA', NEWNAME)
+        :gsub('l_', newname .. '_')
+        :gsub('CallInfo', newname .. 'CallInfo')
+        :gsub('lauxlib', newname .. 'auxlib')
 end
 
 local function compile_to_luadbg(file)
     local compiled_file = compile(file)
-    local f <const> = assert(io.open(outpath..compiled_file, "wb"))
-    f:write "/* clang-format off */\n"
-    for line in io.lines(luapath..file) do
+    local f <const> = assert(io.open(outpath .. compiled_file, 'wb'))
+    f:write('/* clang-format off */\n')
+    for line in io.lines(luapath .. file) do
         local compiled_line = compile(line)
         f:write(compiled_line)
-        f:write "\n"
+        f:write('\n')
     end
 end
 
 local exports, marcos = lua_exports()
 do
-    local f <const> = assert(io.open(outpath..newname.."exports.h", "wb"))
-    f:write "/* clang-format off */\n"
-    f:write "#pragma once\n"
-    f:write "\n"
+    local f <const> = assert(io.open(outpath .. newname .. 'exports.h', 'wb'))
+    f:write('/* clang-format off */\n')
+    f:write('#pragma once\n')
+    f:write('\n')
     for _, export in ipairs(exports) do
-        f:write(("#define %s %s\n"):format(export, compile(export)))
+        f:write(('#define %s %s\n'):format(export, compile(export)))
     end
 end
 do
-    local f <const> = assert(io.open(outpath..newname.."rename.h", "wb"))
+    local f <const> = assert(io.open(outpath .. newname .. 'rename.h', 'wb'))
     local function write(v)
-        f:write(("#define %s %s\n"):format(v, compile(v)))
+        f:write(('#define %s %s\n'):format(v, compile(v)))
     end
-    f:write "/* clang-format off */\n"
-    f:write "#pragma once\n"
-    f:write "\n"
-    write "lua_State"
-    write "lua_Integer"
-    write "lua_Number"
-    write "lua_CFunction"
-    write "lua_Alloc"
-    write "luaL_Stream"
-    write "luaL_Buffer"
-    write "luaL_Reg"
+    f:write('/* clang-format off */\n')
+    f:write('#pragma once\n')
+    f:write('\n')
+    write('lua_State')
+    write('lua_Integer')
+    write('lua_Number')
+    write('lua_CFunction')
+    write('lua_Alloc')
+    write('luaL_Stream')
+    write('luaL_Buffer')
+    write('luaL_Reg')
 
-    f:write "\n"
+    f:write('\n')
     for _, marco in ipairs(marcos) do
-        f:write(("#define %s %s\n"):format(marco, compile(marco)))
+        f:write(('#define %s %s\n'):format(marco, compile(marco)))
     end
 end
 do
-    local f <const> = assert(io.open(outpath..newname.."imports.h", "wb"))
+    local f <const> = assert(io.open(outpath .. newname .. 'imports.h', 'wb'))
     local function write(v)
-        f:write(("#define %s %s\n"):format(compile(v), v))
+        f:write(('#define %s %s\n'):format(compile(v), v))
     end
-    f:write "/* clang-format off */\n"
-    f:write "#pragma once\n"
-    f:write "\n"
+    f:write('/* clang-format off */\n')
+    f:write('#pragma once\n')
+    f:write('\n')
     for _, export in ipairs(exports) do
         write(export)
     end
-    f:write "\n"
-    write "lua_State"
-    write "lua_Integer"
-    write "lua_Number"
-    write "lua_CFunction"
-    write "luaL_Stream"
-    write "luaL_Buffer"
-    write "luaL_Reg"
-    f:write "\n"
+    f:write('\n')
+    write('lua_State')
+    write('lua_Integer')
+    write('lua_Number')
+    write('lua_CFunction')
+    write('luaL_Stream')
+    write('luaL_Buffer')
+    write('luaL_Reg')
+    f:write('\n')
     for _, marco in ipairs(marcos) do
         write(marco)
     end
 end
 
-compile_to_luadbg("lua.h")
-compile_to_luadbg("luaconf.h")
-compile_to_luadbg("lualib.h")
-compile_to_luadbg("lauxlib.h")
-compile_to_luadbg("lua.hpp")
+compile_to_luadbg('lua.h')
+compile_to_luadbg('luaconf.h')
+compile_to_luadbg('lualib.h')
+compile_to_luadbg('lauxlib.h')
+compile_to_luadbg('lua.hpp')

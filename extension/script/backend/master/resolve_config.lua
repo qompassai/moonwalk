@@ -1,8 +1,9 @@
 --- Validate and complete a debug configuration.
 ---
---- @param config table Raw configuration table.
---- @return table|nil config The validated configuration table, or nil on failure.
---- @return string|nil errmsg An error message on failure, or nil on success.
+--- Mutates `config` in place (fills defaults, normalizes fields) and returns
+--- nothing; callers use the mutated table.
+---
+--- @param config table Raw configuration table, mutated in place.
 local function resolve_config(config)
     -- Apply common defaults.
     config.type = 'lua'

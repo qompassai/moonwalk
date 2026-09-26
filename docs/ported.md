@@ -83,7 +83,7 @@ end
 
 By default, the debugger installs a count hook when there are no breakpoints so it has an opportunity to respond to GUI requests, such as adding a new breakpoint or pausing execution. However, this also affects runtime efficiency when the debugger has no breakpoints.
 
-You can disable this behavior and have Lua emit `update` events at an appropriate interval instead. This reduces the debugger's performance impact to a minimum—almost negligible.
+You can disable this behavior and have Lua emit `update` events at an appropriate interval instead. This reduces the debugger's performance impact to a minimum - almost negligible.
 
 The `update` event affects only the responsiveness of GUI operations during debugging, generally new breakpoints and pause requests. An interval of no more than 0.2 seconds is usually sufficient.
 

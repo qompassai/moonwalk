@@ -2,137 +2,132 @@
 
 ---
 ---@class LuaDebugHookmgr
----在调试器VM提供了一个hook管理器。理论上它可以用visitor提供的API，完全由Lua实现。但出于对性能的考虑，所以将hook的管理有C++实现，这也是luadebug中唯一考虑了性能的一个模块。
+---A hook manager living in the debugger VM. In principle it could be
+---implemented entirely in Lua on top of the visitor API, but hook management
+---is the one part of luadebug where performance mattered enough to move it
+---into C++.
 ---
 local hookmgr = {}
 
 ---
 ---@param callback fun(name:string,...):boolean|nil
----初始化hookmgr，并注册一个回调函数。当有事件被触发时，会调用回调函数。事件可以是rdebug.probe/rdebug.event触发的，也可以是hookmgr内部触发的内置事件。
----* `newproto` proto也就是函数原型，每次调试器遇到新的proto就会触发这个事件。返回值需要告诉调试器这个proto是否包含断点，然后调试器会自动调用hookmgr.break_add或hookmgr.break_del。
----* `bp` 执行有断点的proto时会触发，需要自己检查是否命中了行号。
----* `step` 满足单步状态时触发。
----* `funcbp` 每次进入一个函数时会触发。需要用hookmgr.funcbp_open激活。
----* `update` 每隔一段时间触发。需要用hookmgr.update_open激活。
----* `exception` 每次触发非内存错误时触发。需要用hookmgr.exception_open激活。需要补丁支持。
----* `thread` 每次进入或退出thread会触发。需要用hookmgr.thread_open激活。需要补丁支持。
+---Initializes hookmgr and registers a callback invoked whenever an event
+---fires. Events can be raised by rdebug.probe/rdebug.event or by hookmgr's
+---own built-in internal events.
+---* `newproto` proto is a function prototype; fires whenever the debugger
+---  encounters a new one. The return value tells the debugger whether this
+---  proto contains breakpoints, and the debugger then calls
+---  hookmgr.break_add or hookmgr.break_del automatically.
+---* `bp` fires when a proto with breakpoints runs; the handler checks
+---  whether the line number matches.
+---* `step` fires when the step condition is satisfied.
+---* `funcbp` fires on every function entry. Enable with
+---  hookmgr.funcbp_open.
+---* `update` fires periodically. Enable with hookmgr.update_open.
+---* `exception` fires on every non-memory error. Enable with
+---  hookmgr.exception_open. Requires patch support.
+---* `thread` fires on every thread entry/exit. Enable with
+---  hookmgr.thread_open. Requires patch support.
 ---
-function hookmgr.init(callback)
-end
+function hookmgr.init(callback) end
 
 ---
 ---@param co thread
----设置当前调试的协程为co。
+---Sets co as the coroutine currently being debugged.
 ---
-function hookmgr.sethost(co)
-end
+function hookmgr.sethost(co) end
 
 ---
 ---@return thread
----获取当前调试的协程。
+---Returns the coroutine currently being debugged.
 ---
-function hookmgr.gethost()
-end
+function hookmgr.gethost() end
 
 ---
 ---@param co thread
----更新指定协程的hookmask。(因为Lua不会帮你更新)
+---Refreshes the hookmask of the given coroutine. (Lua does not update it
+---for you.)
 ---
-function hookmgr.updatehookmask(co)
-end
+function hookmgr.updatehookmask(co) end
 
 ---
 ---@return integer
----获取当前的栈层级。
+---Returns the current stack level.
 ---
-function hookmgr.stacklevel()
-end
+function hookmgr.stacklevel() end
 
 ---
 ---@param proto lightuserdata
----设置proto有断点。
+---Marks proto as containing breakpoints.
 ---
-function hookmgr.break_add(proto)
-end
+function hookmgr.break_add(proto) end
 
 ---
 ---@param proto lightuserdata
----设置proto没断点。
+---Marks proto as having no breakpoints.
 ---
-function hookmgr.break_del(proto)
-end
+function hookmgr.break_del(proto) end
 
 ---
 ---@param enable boolean
----启用`bp`事件。
+---Enables the `bp` event.
 ---
-function hookmgr.break_open(enable)
-end
+function hookmgr.break_open(enable) end
 
 ---
----仅在本次函数调用中关闭`bp`事件。
+---Disables the `bp` event for this function call only.
 ---
-function hookmgr.break_closeline()
-end
-
----
----@param enable boolean
----启用`funcbp`事件。
----
-function hookmgr.funcbp_open(enable)
-end
-
----
----步入。
----
-function hookmgr.step_in()
-end
-
----
----步出。
----
-function hookmgr.step_out()
-end
-
----
----步过。
----
-function hookmgr.step_over()
-end
-
----
----取消`step_in/step_out/step_over`的状态。
----
-function hookmgr.step_cancel()
-end
+function hookmgr.break_closeline() end
 
 ---
 ---@param enable boolean
----启用`update`事件。
+---Enables the `funcbp` event.
 ---
-function hookmgr.update_open(enable)
-end
+function hookmgr.funcbp_open(enable) end
+
+---
+---Steps into the next call.
+---
+function hookmgr.step_in() end
+
+---
+---Steps out of the current call.
+---
+function hookmgr.step_out() end
+
+---
+---Steps over the next call.
+---
+function hookmgr.step_over() end
+
+---
+---Cancels the pending `step_in/step_out/step_over` state.
+---
+function hookmgr.step_cancel() end
 
 ---
 ---@param enable boolean
----启用`exception`事件。
+---Enables the `update` event.
 ---
-function hookmgr.exception_open(enable)
-end
+function hookmgr.update_open(enable) end
 
 ---
 ---@param enable boolean
----启用`thread`事件。
+---Enables the `exception` event.
 ---
-function hookmgr.thread_open(enable)
-end
+function hookmgr.exception_open(enable) end
+
+---
+---@param enable boolean
+---Enables the `thread` event.
+---
+function hookmgr.thread_open(enable) end
 
 ---
 ---@param co thread
 ---@return thread
----获取coroutine调用方
+---Returns the coroutine that resumed co (its caller).
 ---
-function hookmgr.coroutine_from(co)
-end
+function hookmgr.coroutine_from(co) end
 
 return hookmgr

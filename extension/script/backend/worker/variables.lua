@@ -1,10 +1,16 @@
-local rdebug = require 'luadebug.visitor'
-local source = require 'backend.worker.source'
-local luaver = require 'backend.worker.luaver'
-local serialize = require 'backend.worker.serialize'
-local ev = require 'backend.event'
-local base64 = require 'common.base64'
-local eval = require 'backend.worker.eval'
+-- backend/worker/variables.lua
+--
+-- Turns live debuggee values into DAP variable objects: reference-counted
+-- handles for tables/functions/userdata, expandable scopes (locals, globals,
+-- upvalues), and the read/write paths used by setVariable and the REPL.
+
+local rdebug = require('luadebug.visitor')
+local source = require('backend.worker.source')
+local luaver = require('backend.worker.luaver')
+local serialize = require('backend.worker.serialize')
+local ev = require('backend.event')
+local base64 = require('common.base64')
+local eval = require('backend.worker.eval')
 
 local SHORT_TABLE_ARRAY <const> = 15
 local SHORT_TABLE_HASH <const> = 100
@@ -25,63 +31,63 @@ local showIntegerAsHex = false
 
 local function init_standard()
     local lstandard = {
-        "_G",
-        "_VERSION",
-        "assert",
-        "collectgarbage",
-        "coroutine",
-        "debug",
-        "dofile",
-        "error",
-        "getmetatable",
-        "io",
-        "ipairs",
-        "load",
-        "loadfile",
-        "math",
-        "next",
-        "os",
-        "package",
-        "pairs",
-        "pcall",
-        "print",
-        "rawequal",
-        "rawget",
-        "rawset",
-        "require",
-        "select",
-        "setmetatable",
-        "string",
-        "table",
-        "tonumber",
-        "tostring",
-        "type",
-        "xpcall",
+        '_G',
+        '_VERSION',
+        'assert',
+        'collectgarbage',
+        'coroutine',
+        'debug',
+        'dofile',
+        'error',
+        'getmetatable',
+        'io',
+        'ipairs',
+        'load',
+        'loadfile',
+        'math',
+        'next',
+        'os',
+        'package',
+        'pairs',
+        'pcall',
+        'print',
+        'rawequal',
+        'rawget',
+        'rawset',
+        'require',
+        'select',
+        'setmetatable',
+        'string',
+        'table',
+        'tonumber',
+        'tostring',
+        'type',
+        'xpcall',
     }
 
     if LUAVERSION == 51 then
-        table.insert(lstandard, "gcinfo")
-        table.insert(lstandard, "getfenv")
-        table.insert(lstandard, "loadstring")
-        table.insert(lstandard, "module")
-        table.insert(lstandard, "newproxy")
-        table.insert(lstandard, "setfenv")
-        table.insert(lstandard, "unpack")
+        table.insert(lstandard, 'gcinfo')
+        table.insert(lstandard, 'getfenv')
+        table.insert(lstandard, 'loadstring')
+        table.insert(lstandard, 'module')
+        table.insert(lstandard, 'newproxy')
+        table.insert(lstandard, 'setfenv')
+        table.insert(lstandard, 'unpack')
     elseif LUAVERSION == 52 then
-        table.insert(lstandard, "rawlen")
-        table.insert(lstandard, "bit32")
+        table.insert(lstandard, 'rawlen')
+        table.insert(lstandard, 'bit32')
     elseif LUAVERSION == 53 then
-        table.insert(lstandard, "rawlen")
-        table.insert(lstandard, "bit32")
-        table.insert(lstandard, "utf8")
+        table.insert(lstandard, 'rawlen')
+        table.insert(lstandard, 'bit32')
+        table.insert(lstandard, 'utf8')
     elseif LUAVERSION >= 54 then
-        table.insert(lstandard, "rawlen")
-        table.insert(lstandard, "utf8")
-        table.insert(lstandard, "warn")
+        table.insert(lstandard, 'rawlen')
+        table.insert(lstandard, 'utf8')
+        table.insert(lstandard, 'warn')
     end
     if isjit then
-        table.insert(lstandard, "jit")
-        table.insert(lstandard, "bit")
+        table.insert(lstandard, 'jit')
+        table.insert(lstandard, 'bit')
     end
     standard = {}
     for _, v in ipairs(lstandard) do
@@ -99,15 +105,15 @@ end)
 
 local function isTemporary(name)
     if LUAVERSION >= 54 then
-        return name == "(C temporary)" or name == "(temporary)"
+        return name == '(C temporary)' or name == '(temporary)'
     end
-    return name == "(*temporary)"
+    return name == '(*temporary)'
 end
 
 local special_has = {}
 
 function special_has.Parameter(frameId)
-    rdebug.getinfo(frameId, "u", info)
+    rdebug.getinfo(frameId, 'u', info)
     if info.nparams > 0 then
         return true
     end
@@ -116,7 +122,7 @@ end
 
 function special_has.Local(frameId)
     local i = 1
-    --已经在Parameter里调用过getinfo 'u'
+    -- getinfo('u') was already called by Parameter
     if LUAVERSION >= 52 and info.nparams > 0 then
         i = i + info.nparams
     end
@@ -133,35 +139,35 @@ function special_has.Local(frameId)
 end
 
 function special_has.Upvalue(frameId)
-    rdebug.getinfo(frameId, "f", info)
+    rdebug.getinfo(frameId, 'f', info)
     return rdebug.getupvaluev(info.func, 1) ~= nil
 end
 
 function special_has.Return(frameId)
-    rdebug.getinfo(frameId, "r", info)
+    rdebug.getinfo(frameId, 'r', info)
     return info.ftransfer > 0 and info.ntransfer > 0
 end
 
 function special_has.Global(frameId)
-    rdebug.getinfo(frameId, "f", info)
-    local eval, value = rdebug.getupvaluev(info.func, 1)
-    if eval ~= "_ENV" then
-        eval = "_G"
+    rdebug.getinfo(frameId, 'f', info)
+    local uvname, value = rdebug.getupvaluev(info.func, 1)
+    if uvname ~= '_ENV' then
+        uvname = '_G'
         value = rdebug._G
         if LUAVERSION == 51 then
             local fenv = rdebug.getfenv(info.func)
             if fenv and not rdebug.equal(fenv, rdebug._G) then
-                eval = nil
+                uvname = nil
                 value = fenv
             end
         end
     end
-    if eval == "_G" and globalCache._G then
+    if uvname == '_G' and globalCache._G then
         local t = globalCache._G
         globalCache[frameId] = t
         return #t.global > 0
     end
-    local t = { global = {}, standard = {}, eval = eval, value = value }
+    local t = { global = {}, standard = {}, eval = uvname, value = value }
     local asize = 0
     local loct = rdebug.tablehash(value, 0, MAX_TABLE_HASH)
     if loct then
@@ -169,18 +175,18 @@ function special_has.Global(frameId)
         for i = 1, #loct, 3 do
             local key = loct[i]
             if standard[key] then
-                t.standard[#t.standard+1] = loct[i]
-                t.standard[#t.standard+1] = loct[i+1]
-                t.standard[#t.standard+1] = loct[i+2]
+                t.standard[#t.standard + 1] = loct[i]
+                t.standard[#t.standard + 1] = loct[i + 1]
+                t.standard[#t.standard + 1] = loct[i + 2]
             else
-                t.global[#t.global+1] = loct[i]
-                t.global[#t.global+1] = loct[i+1]
-                t.global[#t.global+1] = loct[i+2]
+                t.global[#t.global + 1] = loct[i]
+                t.global[#t.global + 1] = loct[i + 1]
+                t.global[#t.global + 1] = loct[i + 2]
             end
         end
     end
     globalCache[frameId] = t
-    if eval == "_G" then
+    if uvname == '_G' then
         globalCache._G = t
     end
     return asize ~= 0 or #t.global > 0
@@ -195,11 +201,11 @@ local function floatNormalize(str)
     if str:find('.', 1, true) then
         str = str:gsub('0+$', '')
         if str:sub(-1) == '.' then
-            return str..'0'
+            return str .. '0'
         end
         return str
     else
-        return str..".0"
+        return str .. '.0'
     end
 end
 
@@ -234,19 +240,19 @@ local function formatInteger(value)
 end
 
 local escape_char = {
-    ["\\"..string.byte "\a"] = "\\".."a",
-    ["\\"..string.byte "\b"] = "\\".."b",
-    ["\\"..string.byte "\f"] = "\\".."f",
-    ["\\"..string.byte "\n"] = "\\".."n",
-    ["\\"..string.byte "\r"] = "\\".."r",
-    ["\\"..string.byte "\t"] = "\\".."t",
-    ["\\"..string.byte "\v"] = "\\".."v",
-    ["\\"..string.byte "\\"] = "\\".."\\",
-    ["\\"..string.byte "\""] = "\\".."\"",
+    ['\\' .. string.byte('\a')] = '\\' .. 'a',
+    ['\\' .. string.byte('\b')] = '\\' .. 'b',
+    ['\\' .. string.byte('\f')] = '\\' .. 'f',
+    ['\\' .. string.byte('\n')] = '\\' .. 'n',
+    ['\\' .. string.byte('\r')] = '\\' .. 'r',
+    ['\\' .. string.byte('\t')] = '\\' .. 't',
+    ['\\' .. string.byte('\v')] = '\\' .. 'v',
+    ['\\' .. string.byte('\\')] = '\\' .. '\\',
+    ['\\' .. string.byte('"')] = '\\' .. '"',
 }
 
 local function quotedString(s)
-    return ("%q"):format(s):sub(2, -2):gsub("\\[1-9][0-9]?", escape_char):gsub("\\\n", "\\n")
+    return ('%q'):format(s):sub(2, -2):gsub('\\[1-9][0-9]?', escape_char):gsub('\\\n', '\\n')
 end
 
 local function varCanExtand(type, value)
@@ -277,14 +283,14 @@ local function varCanExtand(type, value)
         end
         return false
     elseif type == 'cdata' then
-        return eval.ffi_reflect("canextand", value)
+        return eval.ffi_reflect('canextand', value)
     end
     return false
 end
 
 local function varGetShortName(v)
     local type, value = rdebug.value(v)
-    if LUAVERSION <= 52 and type == "float" then
+    if LUAVERSION <= 52 and type == 'float' then
         ---@cast value number
         if value == math.floor(value) then
             type = 'integer'
@@ -295,7 +301,7 @@ local function varGetShortName(v)
         if #value < 32 then
             return value
         end
-        return quotedString(value:sub(1, 32))..'...'
+        return quotedString(value:sub(1, 32)) .. '...'
     elseif type == 'boolean' then
         if value then
             return 'true'
@@ -312,14 +318,14 @@ local function varGetShortName(v)
     elseif type == 'float' then
         return floatToShortString(value)
     elseif type == 'cdata' or type == 'ctype' then
-        return eval.ffi_reflect("shorttypename", v) or type
+        return eval.ffi_reflect('shorttypename', v) or type
     end
-    return ("%s: %s"):format(type, value)
+    return ('%s: %s'):format(type, value)
 end
 
 local function varGetName(v)
     local type, value = rdebug.value(v)
-    if LUAVERSION <= 52 and type == "float" then
+    if LUAVERSION <= 52 and type == 'float' then
         ---@cast value number
         if value == math.floor(value) then
             type = 'integer'
@@ -335,15 +341,15 @@ local function varGetName(v)
     elseif type == 'string' then
         return quotedString(value)
     elseif type == 'cdata' then
-        return eval.ffi_reflect("shorttypename", v) or "cdata"
+        return eval.ffi_reflect('shorttypename', v) or 'cdata'
     elseif type == 'ctype' then
-        local tt = eval.ffi_reflect("shorttypename", v)
+        local tt = eval.ffi_reflect('shorttypename', v)
         if not tt then
             return type
         end
-        return "ctype("..tt..")"
+        return 'ctype(' .. tt .. ')'
     end
-    return ("%s: %s"):format(type, value)
+    return ('%s: %s'):format(type, value)
 end
 
 local function varGetShortUserdata(value)
@@ -383,13 +389,13 @@ local function varGetShortValue(v)
         return 'func'
     elseif type == 'table' then
         if varCanExtand(type, v) then
-            return "..."
+            return '...'
         end
         return '{}'
     elseif type == 'userdata' then
         return varGetShortUserdata(v)
     elseif type == 'cdata' then
-        return eval.ffi_reflect("shortvalue", v)
+        return eval.ffi_reflect('shortvalue', v)
     end
     return type
 end
@@ -403,10 +409,10 @@ local function varGetTableValue(t)
             if str == '' then
                 str = varGetShortValue(v)
             else
-                str = str..","..varGetShortValue(v)
+                str = str .. ',' .. varGetShortValue(v)
             end
             if #str >= TABLE_VALUE_MAXLEN then
-                return ("{%s,...}"):format(str)
+                return ('{%s,...}'):format(str)
             end
         end
     end
@@ -419,19 +425,21 @@ local function varGetTableValue(t)
             local kn = varGetShortName(key)
             kvs[#kvs + 1] = { kn, value }
         end
-        table.sort(kvs, function(a, b) return a[1] < b[1] end)
+        table.sort(kvs, function(a, b)
+            return a[1] < b[1]
+        end)
         for _, kv in ipairs(kvs) do
             if str == '' then
-                str = kv[1]..'='..varGetShortValue(kv[2])
+                str = kv[1] .. '=' .. varGetShortValue(kv[2])
             else
-                str = str..','..kv[1]..'='..varGetShortValue(kv[2])
+                str = str .. ',' .. kv[1] .. '=' .. varGetShortValue(kv[2])
             end
             if #str >= TABLE_VALUE_MAXLEN then
-                return ("{%s,...}"):format(str)
+                return ('{%s,...}'):format(str)
             end
         end
     end
-    return ("{%s}"):format(str)
+    return ('{%s}'):format(str)
 end
 
 local function getLineStart(str, pos, n)
@@ -452,11 +460,11 @@ local function getLineStart(str, pos, n)
 end
 
 local function getLineEnd(str, pos, n)
-    local pos = getLineStart(str, pos, n)
+    pos = getLineStart(str, pos, n)
     if not pos then
         return
     end
-    local pos = str:find('[\n\r]', pos)
+    pos = str:find('[\n\r]', pos)
     if not pos then
         return
     end
@@ -476,13 +484,13 @@ local function getFunctionCode(str, startLn, endLn)
 end
 
 local function varGetFunctionCode(v, value)
-    rdebug.getinfo(v, "S", info)
+    rdebug.getinfo(v, 'S', info)
     local src = source.create(info.source)
     if not source.valid(src) then
-        return ("function: %s"):format(value)
+        return ('function: %s'):format(value)
     end
     if not src.sourceReference then
-        return ("%s:%d"):format(source.clientPath(src.path), info.linedefined)
+        return ('%s:%d'):format(source.clientPath(src.path), info.linedefined)
     end
     local code = source.getCode(src.sourceReference)
     return getFunctionCode(code, info.linedefined, info.lastlinedefined)
@@ -495,30 +503,30 @@ local function varGetUserdata(value, allow_lazy)
         if fn ~= nil then
             local ok, res = rdebug.eval(fn, value)
             if ok then
-                return res, "userdata"
+                return res, 'userdata'
             else
-                return "__debugger_tostring error: "..res, "userdata"
+                return '__debugger_tostring error: ' .. res, 'userdata'
             end
         end
-        local fn = rdebug.fieldv(meta, '__tostring')
+        fn = rdebug.fieldv(meta, '__tostring')
         if fn ~= nil then
             if allow_lazy then
-                return 'userdata', "userdata", true
+                return 'userdata', 'userdata', true
             else
                 local ok, res = rdebug.eval(fn, value)
                 if ok then
-                    return res, "userdata"
+                    return res, 'userdata'
                 else
-                    return "__tostring error: "..res, "userdata"
+                    return '__tostring error: ' .. res, 'userdata'
                 end
             end
         end
         local name = rdebug.fieldv(meta, '__name')
         if name ~= nil then
-            return rdebug.tostring(name), "userdata"
+            return rdebug.tostring(name), 'userdata'
         end
     end
-    return 'userdata', "userdata"
+    return 'userdata', 'userdata'
 end
 
 -- context: variables,hover,watch,repl,clipboard
@@ -526,10 +534,10 @@ local function varGetValue(context, allow_lazy, v)
     local type, value = rdebug.value(v)
     if type == 'string' then
         ---@cast value string
-        if context == "repl" or context == "clipboard" then
+        if context == 'repl' or context == 'clipboard' then
             return ("'%s'"):format(value), 'string'
         end
-        if context == "hover" then
+        if context == 'hover' then
             if #value < 2048 then
                 return ("'%s'"):format(value), 'string'
             end
@@ -554,36 +562,36 @@ local function varGetValue(context, allow_lazy, v)
     elseif type == 'function' then
         return varGetFunctionCode(v, value), 'function'
     elseif type == 'c function' then
-        return "C function", 'c function'
+        return 'C function', 'c function'
     elseif type == 'table' then
-        if context == "clipboard" then
+        if context == 'clipboard' then
             return serialize(v), 'table'
         end
         return varGetTableValue(v), 'table'
     elseif type == 'userdata' then
-        if context == "variables" then
+        if context == 'variables' then
             return varGetUserdata(v, allow_lazy)
         end
         return varGetUserdata(v, false)
     elseif type == 'lightuserdata' then
-        return 'light'..tostring(value), 'lightuserdata'
+        return 'light' .. tostring(value), 'lightuserdata'
     elseif type == 'thread' then
         return ('thread (%s)'):format(rdebug.costatus(v)), 'thread'
     elseif type == 'cdata' then
-        local t = eval.ffi_reflect("shorttypename", v)
+        local t = eval.ffi_reflect('shorttypename', v)
         if not t then
-            return "cdata", 'cdata'
+            return 'cdata', 'cdata'
         end
-        local v = eval.ffi_reflect("shortvalue", v)
-        if not v then
+        local shortv = eval.ffi_reflect('shortvalue', v)
+        if not shortv then
             return t, 'cdata'
         end
-        return tostring(v).." ("..t..")", 'cdata'
+        return tostring(shortv) .. ' (' .. t .. ')', 'cdata'
     elseif type == 'ctype' then
-        local name = eval.ffi_reflect("shorttypename", v)
-        return "ctype("..(name or "unknown")..")", 'ctype'
+        local name = eval.ffi_reflect('shorttypename', v)
+        return 'ctype(' .. (name or 'unknown') .. ')', 'ctype'
     end
-    return ("%s: %s"):format(type, value), type
+    return ('%s: %s'):format(type, value), type
 end
 
 local function varCreateReference(value, evaluateName, presentationHint, context, allow_lazy)
@@ -597,10 +605,10 @@ local function varCreateReference(value, evaluateName, presentationHint, context
         presentationHint = presentationHint,
     }
     result.presentationHint.lazy = lazy
-    if type == "integer" then
-        result.__vscodeVariableMenuContext = showIntegerAsHex and "integer/hex" or "integer/dec"
+    if type == 'integer' then
+        result.__vscodeVariableMenuContext = showIntegerAsHex and 'integer/hex' or 'integer/dec'
     end
-    if type == "string" or type == "userdata" or type == "function" then
+    if type == 'string' or type == 'userdata' or type == 'function' then
         memoryRefPool[#memoryRefPool + 1] = {
             type = type,
             value = value,
@@ -615,7 +623,7 @@ local function varCreateReference(value, evaluateName, presentationHint, context
             lazy = result.presentationHint.lazy,
         }
         result.variablesReference = #varPool
-        if type == "table" then
+        if type == 'table' then
             local asize, hsize = rdebug.tablesize(value)
             result.indexedVariables = arrayBase + asize
             result.namedVariables = hsize
@@ -638,7 +646,7 @@ local function varCreateScopes(frameId, scopes, name, expensive)
         variablesReference = #varPool,
         expensive = expensive,
     }
-    if name == "Global" then
+    if name == 'Global' then
         local cache = globalCache[frameId]
         local scope = scopes[#scopes]
         local asize, hsize = rdebug.tablesize(cache.value)
@@ -653,7 +661,7 @@ end
 local function varCreateTableKV(key, value, context)
     varPool[#varPool + 1] = {
         v = { key, value },
-        special = "TableKV",
+        special = 'TableKV',
     }
     local valuestr, _, lazy = varGetValue(context, true, value)
     if lazy == nil then
@@ -662,12 +670,12 @@ local function varCreateTableKV(key, value, context)
     return {
         type = 'TableKV',
         value = valuestr,
-        name = string.format("[%s]", rdebug.type(key)),
+        name = string.format('[%s]', rdebug.type(key)),
         variablesReference = #varPool,
         presentationHint = {
             kind = 'virtual',
             lazy = lazy,
-        }
+        },
     }
 end
 
@@ -679,30 +687,31 @@ local function varCreate(t)
         local index = extand[name].index
         local nameidx = extand[name].nameidx
         local var = vars[index]
-        if not nameidx or (var.presentationHint and var.presentationHint.kind == "virtual") then
-            local log = require 'common.log'
-            log.error("same name variables: "..name)
+        if not nameidx or (var.presentationHint and var.presentationHint.kind == 'virtual') then
+            local log = require('common.log')
+            log.error('same name variables: ' .. name)
             return {}
         end
-        local newname = ("%s #%d"):format(name, nameidx)
+        local newname = ('%s #%d'):format(name, nameidx)
         if extand[newname] then
-            local log = require 'common.log'
-            log.error("same name variables: "..name)
+            local log = require('common.log')
+            log.error('same name variables: ' .. name)
             return {}
         end
         var.name = newname
         var.presentationHint = {
-            kind = "virtual"
+            kind = 'virtual',
         }
         var.evaluateName = nil
         extand[newname] = extand[name]
         extand[newname].evaluateName = nil
         extand[name] = nil
     end
-    if type(t.evaluateName) ~= "string" then
+    if type(t.evaluateName) ~= 'string' then
         t.evaluateName = nil
     end
-    local var = varCreateReference(t.value, t.evaluateName, t.presentationHint or {}, "variables", true)
+    local var =
+        varCreateReference(t.value, t.evaluateName, t.presentationHint or {}, 'variables', true)
     var.name = name
     var.evaluateName = t.evaluateName
     vars[#vars + 1] = var
@@ -720,16 +729,16 @@ local function cfunctioninfo(func)
     if cfunctionInfo[key] then
         return cfunctionInfo[key]
     end
-    local info = rdebug.cfunctioninfo(func)
-    cfunctionInfo[key] = info
-    return info
+    local cinfo = rdebug.cfunctioninfo(func)
+    cfunctionInfo[key] = cinfo
+    return cinfo
 end
 
 local function getTabelKey(key)
     local type, value = rdebug.value(key)
     if type == 'string' then
         ---@cast value string
-        if value:match '^[_%a][_%w]*$' then
+        if value:match('^[_%a][_%w]*$') then
             return ('.%s'):format(value)
         end
         return ('[%q]'):format(value)
@@ -741,7 +750,7 @@ end
 local function evaluateTabelKey(table, key)
     local evaluateKey = getTabelKey(key)
     if table and evaluateKey then
-        return ("%s%s"):format(table, evaluateKey)
+        return ('%s%s'):format(table, evaluateKey)
     end
 end
 
@@ -757,20 +766,22 @@ local function extandTableIndexed(varRef, start, count)
     if last < start then
         return vars
     end
-    local loct = rdebug.tablearray(t, start-arrayBase, last-arrayBase)
+    local loct = rdebug.tablearray(t, start - arrayBase, last - arrayBase)
     for i = 1, #loct, 2 do
         local key = start + i // 2
         local value, valueref = loct[i], loct[i + 1]
         if value ~= nil then
             local name = (key < 1000) and ('[%03d]'):format(key) or ('%d'):format(key)
-            varCreate {
+            varCreate({
                 vars = vars,
                 varRef = varRef,
                 name = name,
                 value = value,
                 evaluateName = evaluateName and ('%s[%d]'):format(evaluateName, key),
-                calcValue = function() return valueref end,
-            }
+                calcValue = function()
+                    return valueref
+                end,
+            })
         end
     end
     return vars
@@ -786,32 +797,38 @@ local function extandTableNamed(varRef)
         local key, value, valueref = loct[i], loct[i + 1], loct[i + 2]
         local key_type = rdebug.type(key)
         if varCanExtand(key_type, key) then
-            vars[#vars + 1] = varCreateTableKV(key, value, "variables")
+            vars[#vars + 1] = varCreateTableKV(key, value, 'variables')
         else
-            varCreate {
+            varCreate({
                 vars = vars,
                 varRef = varRef,
                 name = varGetName(key),
                 value = value,
                 evaluateName = evaluateTabelKey(evaluateName, key),
-                calcValue = function() return valueref end,
-            }
+                calcValue = function()
+                    return valueref
+                end,
+            })
         end
     end
-    table.sort(vars, function(a, b) return a.name < b.name end)
+    table.sort(vars, function(a, b)
+        return a.name < b.name
+    end)
     local meta = rdebug.getmetatablev(t)
     if meta ~= nil then
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = '[metatable]',
             value = meta,
             evaluateName = evaluateName and ('debug.getmetatable(%s)'):format(evaluateName),
-            calcValue = function() return rdebug.getmetatable(t) end,
+            calcValue = function()
+                return rdebug.getmetatable(t)
+            end,
             presentationHint = {
-                kind = "virtual"
-            }
-        }
+                kind = 'virtual',
+            },
+        })
         table.insert(vars, 1, vars[#vars])
         vars[#vars] = nil
     end
@@ -834,45 +851,46 @@ local function extandFunction(varRef)
     local evaluateName = varRef.eval
     local vars = {}
     local i = 1
-    local isCFunction = rdebug.type(f) == "c function"
+    local isCFunction = rdebug.type(f) == 'c function'
     while true do
         local name, value = rdebug.getupvaluev(f, i)
         if name == nil then
             break
         end
-        local displayName = isCFunction and ("[upvalue %d]"):format(i) or name
+        local displayName = isCFunction and ('[upvalue %d]'):format(i) or name
         local fi = i
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = displayName,
             value = value,
-            evaluateName = evaluateName and ('select(2, debug.getupvalue(%s,%d))'):format(evaluateName, i),
+            evaluateName = evaluateName
+                and ('select(2, debug.getupvalue(%s,%d))'):format(evaluateName, i),
             calcValue = function()
                 local _, r = rdebug.getupvalue(f, fi)
                 return r
             end,
             presentationHint = {
-                kind = "virtual"
-            }
-        }
+                kind = 'virtual',
+            },
+        })
         i = i + 1
     end
     if isCFunction then
-        local info = cfunctioninfo(f)
+        local cinfo = cfunctioninfo(f)
         local function createVar(name, value)
-            vars[#vars+1] = {
+            vars[#vars + 1] = {
                 name = name,
                 value = value,
                 type = 'string',
                 presentationHint = {
-                    kind = "virtual",
-                    attributes = "readOnly",
-                }
+                    kind = 'virtual',
+                    attributes = 'readOnly',
+                },
             }
         end
-        if info then
-            for key, value in pairs(info) do
+        if cinfo then
+            for key, value in pairs(cinfo) do
                 createVar(key, value)
             end
         end
@@ -888,17 +906,19 @@ local function extandUserdata(varRef)
 
     local meta = rdebug.getmetatablev(u)
     if meta ~= nil then
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = '[metatable]',
             value = meta,
             evaluateName = evaluateName and ('debug.getmetatable(%s)'):format(evaluateName),
-            calcValue = function() return rdebug.getmetatable(u) end,
+            calcValue = function()
+                return rdebug.getmetatable(u)
+            end,
             presentationHint = {
-                kind = "virtual"
-            }
-        }
+                kind = 'virtual',
+            },
+        })
     end
 
     if LUAVERSION >= 54 then
@@ -910,34 +930,39 @@ local function extandUserdata(varRef)
             end
             if uv ~= nil then
                 local fi = i
-                varCreate {
+                varCreate({
                     vars = vars,
                     varRef = varRef,
                     name = ('[uservalue %d]'):format(i),
                     value = uv,
-                    evaluateName = evaluateName and ('debug.getuservalue(%s,%d)'):format(evaluateName, i),
-                    calcValue = function() return rdebug.getuservalue(u, fi) end,
+                    evaluateName = evaluateName
+                        and ('debug.getuservalue(%s,%d)'):format(evaluateName, i),
+                    calcValue = function()
+                        return rdebug.getuservalue(u, fi)
+                    end,
                     presentationHint = {
-                        kind = "virtual"
-                    }
-                }
+                        kind = 'virtual',
+                    },
+                })
             end
             i = i + 1
         end
     else
         local uv = rdebug.getuservaluev(u)
         if uv ~= nil then
-            varCreate {
+            varCreate({
                 vars = vars,
                 varRef = varRef,
                 name = '[uservalue]',
                 value = uv,
                 evaluateName = evaluateName and ('debug.getuservalue(%s)'):format(evaluateName),
-                calcValue = function() return rdebug.getuservalue(u) end,
+                calcValue = function()
+                    return rdebug.getuservalue(u)
+                end,
                 presentationHint = {
-                    kind = "virtual"
-                }
-            }
+                    kind = 'virtual',
+                },
+            })
         end
     end
 
@@ -948,19 +973,23 @@ local function extandUserdata(varRef)
             local key, value, valueref = loct[i], loct[i + 1], loct[i + 2]
             local key_type = rdebug.type(key)
             if varCanExtand(key_type, key) then
-                members[#members + 1] = varCreateTableKV(key, value, "variables")
+                members[#members + 1] = varCreateTableKV(key, value, 'variables')
             else
-                varCreate {
+                varCreate({
                     vars = members,
                     varRef = varRef,
                     name = varGetName(key),
                     value = value,
                     evaluateName = evaluateTabelKey(evaluateName, key),
-                    calcValue = function() return valueref end,
-                }
+                    calcValue = function()
+                        return valueref
+                    end,
+                })
             end
         end
-        table.sort(members, function(a, b) return a.name < b.name end)
+        table.sort(members, function(a, b)
+            return a.name < b.name
+        end)
         table.move(members, 1, #members, #vars + 1, vars)
     end
     return vars
@@ -974,7 +1003,7 @@ function special_extand.Local(varRef)
     local tempVar = {}
     local vars = {}
     local i = 1
-    rdebug.getinfo(frameId, "u", info)
+    rdebug.getinfo(frameId, 'u', info)
     if info.nparams > 0 then
         i = i + info.nparams
     end
@@ -984,12 +1013,12 @@ function special_extand.Local(varRef)
             break
         end
         if not isTemporary(name) then
-            if name:sub(1, 1) == "(" then
+            if name:sub(1, 1) == '(' then
                 tempVar[name] = tempVar[name] and (tempVar[name] + 1) or 1
-                name = ("(%s #%d)"):format(name:sub(2, -2), tempVar[name])
+                name = ('(%s #%d)'):format(name:sub(2, -2), tempVar[name])
             end
             local fi = i
-            varCreate {
+            varCreate({
                 vars = vars,
                 varRef = varRef,
                 name = name,
@@ -999,7 +1028,7 @@ function special_extand.Local(varRef)
                     local _, r = rdebug.getlocal(frameId, fi)
                     return r
                 end,
-            }
+            })
         end
         i = i + 1
     end
@@ -1011,7 +1040,7 @@ function special_extand.Upvalue(varRef)
     local frameId = varRef.frameId
     local vars = {}
     local i = 1
-    rdebug.getinfo(frameId, "f", info)
+    rdebug.getinfo(frameId, 'f', info)
     local f = info.func
     while true do
         local name, value = rdebug.getupvaluev(f, i)
@@ -1019,7 +1048,7 @@ function special_extand.Upvalue(varRef)
             break
         end
         local fi = i
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = name,
@@ -1029,7 +1058,7 @@ function special_extand.Upvalue(varRef)
                 local _, r = rdebug.getupvalue(f, fi)
                 return r
             end,
-        }
+        })
         i = i + 1
     end
     return vars
@@ -1040,13 +1069,13 @@ function special_extand.Parameter(varRef)
     local frameId = varRef.frameId
     local vars = {}
 
-    rdebug.getinfo(frameId, "u", info)
+    rdebug.getinfo(frameId, 'u', info)
     if info.nparams > 0 then
         for i = 1, info.nparams do
             local name, value = rdebug.getlocalv(frameId, i)
             if name ~= nil then
                 local fi = i
-                varCreate {
+                varCreate({
                     vars = vars,
                     varRef = varRef,
                     name = name,
@@ -1057,7 +1086,7 @@ function special_extand.Parameter(varRef)
                         local _, r = rdebug.getlocal(frameId, fi)
                         return r
                     end,
-                }
+                })
             end
         end
     end
@@ -1069,7 +1098,7 @@ function special_extand.Parameter(varRef)
             break
         end
         local fi = i
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = ('[vararg %d]'):format(-i),
@@ -1079,7 +1108,7 @@ function special_extand.Parameter(varRef)
                 local _, r = rdebug.getlocal(frameId, fi)
                 return r
             end,
-        }
+        })
         i = i - 1
     end
 
@@ -1090,13 +1119,13 @@ function special_extand.Return(varRef)
     varRef.extand = varRef.extand or {}
     local frameId = varRef.frameId
     local vars = {}
-    rdebug.getinfo(frameId, "r", info)
+    rdebug.getinfo(frameId, 'r', info)
     if info.ftransfer > 0 and info.ntransfer > 0 then
         for i = info.ftransfer, info.ftransfer + info.ntransfer - 1 do
             local name, value = rdebug.getlocalv(frameId, i)
             if name ~= nil then
                 local fi = i
-                varCreate {
+                varCreate({
                     vars = vars,
                     varRef = varRef,
                     name = ('[%d]'):format(i - info.ftransfer + 1),
@@ -1106,7 +1135,7 @@ function special_extand.Return(varRef)
                         local _, r = rdebug.getlocal(frameId, fi)
                         return r
                     end,
-                }
+                })
             end
         end
     end
@@ -1121,16 +1150,20 @@ local function extandGlobalNamed(varRef)
     local loct = cache.global
     for i = 1, #loct, 3 do
         local key, value, valueref = loct[i], loct[i + 1], loct[i + 2]
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = varGetName(key),
             value = value,
             evaluateName = evaluateTabelKey(cache.eval, key),
-            calcValue = function() return valueref end,
-        }
+            calcValue = function()
+                return valueref
+            end,
+        })
     end
-    table.sort(vars, function(a, b) return a.name < b.name end)
+    table.sort(vars, function(a, b)
+        return a.name < b.name
+    end)
     return vars
 end
 
@@ -1152,16 +1185,20 @@ function special_extand.Standard(varRef)
     local loct = cache.standard
     for i = 1, #loct, 3 do
         local key, value, valueref = loct[i], loct[i + 1], loct[i + 2]
-        varCreate {
+        varCreate({
             vars = vars,
             varRef = varRef,
             name = varGetName(key),
             value = value,
             evaluateName = evaluateTabelKey(cache.eval, key),
-            calcValue = function() return valueref end,
-        }
+            calcValue = function()
+                return valueref
+            end,
+        })
     end
-    table.sort(vars, function(a, b) return a.name < b.name end)
+    table.sort(vars, function(a, b)
+        return a.name < b.name
+    end)
     return vars
 end
 
@@ -1172,49 +1209,55 @@ function special_extand.TableKV(varRef)
     varCreate({
         vars = vars,
         varRef = varRef,
-        name = "key",
+        name = 'key',
         value = key,
-        calcValue = function() return key end,
+        calcValue = function()
+            return key
+        end,
     })
     varCreate({
         vars = vars,
         varRef = varRef,
-        name = "value",
+        name = 'value',
         value = value,
-        calcValue = function() return value end,
+        calcValue = function()
+            return value
+        end,
     })
     return vars
 end
 
 local function VarCreateCData(varRef, vars, reflct, member, value)
     if rdebug.type(member) ~= 'nil' then
-        local name = rdebug.fieldv(reflct, "name");
+        local name = rdebug.fieldv(reflct, 'name')
         varCreate({
             vars = vars,
             varRef = varRef,
             name = name,
             value = member,
-            calcValue = function() return member end,
+            calcValue = function()
+                return member
+            end,
             presentationHint = {
-                kind = "virtual",
-                attributes = "readOnly",
-            }
+                kind = 'virtual',
+                attributes = 'readOnly',
+            },
         })
     else
-        local what = rdebug.fieldv(reflct, "what")
+        local what = rdebug.fieldv(reflct, 'what')
         varPool[#varPool + 1] = {
             v = { reflct, value },
-            special = 'CData'
+            special = 'CData',
         }
         vars[#vars + 1] = {
-            type = "string",
-            name = "[anonymous]",
+            type = 'string',
+            name = '[anonymous]',
             value = what,
             presentationHint = {
-                kind = "virtual",
-                attributes = "readOnly",
+                kind = 'virtual',
+                attributes = 'readOnly',
             },
-            variablesReference = #varPool
+            variablesReference = #varPool,
         }
     end
 end
@@ -1225,7 +1268,7 @@ function special_extand.CData(varRef)
     local vars = {}
     local index = 1
     while true do
-        local reflct, member = eval.ffi_reflect("annotated_member", typeinfo, index, value)
+        local reflct, member = eval.ffi_reflect('annotated_member', typeinfo, index, value)
         if not reflct then
             break
         end
@@ -1238,47 +1281,47 @@ end
 local function extandCData(varRef)
     varRef.extand = varRef.extand or {}
     local value = varRef.v
-    local what = eval.ffi_reflect("what", value)
-    local type = eval.ffi_reflect("typename", value)
+    local what = eval.ffi_reflect('what', value)
+    local type = eval.ffi_reflect('typename', value)
     if not type then
         return {}
     end
     local vars = {}
-    if what == "func" then
+    if what == 'func' then
         vars[1] = {
-            type = "string",
-            name = "type",
-            value = type or "unknown type",
+            type = 'string',
+            name = 'type',
+            value = type or 'unknown type',
             presentationHint = {
-                kind = "virtual",
-                attributes = "readOnly",
-            }
+                kind = 'virtual',
+                attributes = 'readOnly',
+            },
         }
         vars[2] = {
-            type = "integer",
-            name = "value",
-            value = eval.ffi_reflect("shortvalue", value),
+            type = 'integer',
+            name = 'value',
+            value = eval.ffi_reflect('shortvalue', value),
             presentationHint = {
-                kind = "virtual",
-                attributes = "readOnly",
-            }
+                kind = 'virtual',
+                attributes = 'readOnly',
+            },
         }
-        local info = cfunctioninfo(value)
-        if info then
+        local cinfo = cfunctioninfo(value)
+        if cinfo then
             vars[3] = {
-                type = "string",
-                name = "[native]",
-                value = (info.function_name or 'unknown')..":"..(info.line_number or '?'),
+                type = 'string',
+                name = '[native]',
+                value = (cinfo.function_name or 'unknown') .. ':' .. (cinfo.line_number or '?'),
                 presentationHint = {
-                    kind = "virtual",
-                    attributes = "readOnly",
-                }
+                    kind = 'virtual',
+                    attributes = 'readOnly',
+                },
             }
         end
     else
         local index = 1
         while true do
-            local reflct, member = eval.ffi_reflect("member", value, index)
+            local reflct, member = eval.ffi_reflect('member', value, index)
             if not reflct then
                 break
             end
@@ -1349,21 +1392,21 @@ local function setValue(varRef, name, value)
             end
         end
     end
-    return varCreateReference(rvalue, evaluateName, {}, "variables", true)
+    return varCreateReference(rvalue, evaluateName, {}, 'variables', true)
 end
 
 local m = {}
 
 function m.scopes(frameId)
     local scopes = {}
-    varCreateScopes(frameId, scopes, "Parameter", false)
-    varCreateScopes(frameId, scopes, "Local", false)
-    varCreateScopes(frameId, scopes, "Upvalue", false)
+    varCreateScopes(frameId, scopes, 'Parameter', false)
+    varCreateScopes(frameId, scopes, 'Local', false)
+    varCreateScopes(frameId, scopes, 'Upvalue', false)
     if LUAVERSION >= 54 then
-        varCreateScopes(frameId, scopes, "Return", false)
+        varCreateScopes(frameId, scopes, 'Return', false)
     end
-    varCreateScopes(frameId, scopes, "Global", true)
-    varCreateScopes(frameId, scopes, "Standard", true)
+    varCreateScopes(frameId, scopes, 'Global', true)
+    varCreateScopes(frameId, scopes, 'Standard', true)
     return scopes
 end
 
@@ -1399,7 +1442,7 @@ function m.readMemory(memoryReference, offset, count)
         return nil, 'Error memoryReference'
     end
     offset = offset or 0
-    if memoryRef.type == "string" then
+    if memoryRef.type == 'string' then
         local str = rdebug.tostring(memoryRef.value)
         local slice = str:sub(offset + 1, offset + count)
         if not slice then
@@ -1414,7 +1457,7 @@ function m.readMemory(memoryReference, offset, count)
             unreadableBytes = count - #slice,
             data = base64.encode(slice),
         }
-    elseif memoryRef.type == "userdata" then
+    elseif memoryRef.type == 'userdata' then
         local slice = rdebug.udread(memoryRef.value, offset, count)
         if not slice then
             return {
@@ -1429,7 +1472,7 @@ function m.readMemory(memoryReference, offset, count)
             data = base64.encode(slice),
         }
     else
-        return nil, "Unknown memory type"
+        return nil, 'Unknown memory type'
     end
 end
 
@@ -1439,9 +1482,9 @@ function m.writeMemory(memoryReference, offset, data, allowPartial)
         return nil, 'Error memoryReference'
     end
     offset = offset or 0
-    if memoryRef.type == "string" then
-        return nil, "Readonly memory"
-    elseif memoryRef.type == "userdata" then
+    if memoryRef.type == 'string' then
+        return nil, 'Readonly memory'
+    elseif memoryRef.type == 'userdata' then
         data = base64.decode(data)
         local res = rdebug.udwrite(memoryRef.value, offset, data, allowPartial)
         if not res then
@@ -1452,7 +1495,7 @@ function m.writeMemory(memoryReference, offset, data, allowPartial)
         end
         return {}
     else
-        return nil, "Unknown memory type"
+        return nil, 'Unknown memory type'
     end
 end
 
@@ -1484,11 +1527,12 @@ function m.tostring(v)
         end
     end
     local type, value = rdebug.value(v)
-    if type == 'integer' or
-        type == 'float' or
-        type == 'string' or
-        type == 'boolean' or
-        type == 'nil'
+    if
+        type == 'integer'
+        or type == 'float'
+        or type == 'string'
+        or type == 'boolean'
+        or type == 'nil'
     then
         return tostring(value)
     end
@@ -1498,7 +1542,7 @@ function m.tostring(v)
             type = rdebug.tostring(name)
         end
     end
-    return ("%s: %s"):format(type, value)
+    return ('%s: %s'):format(type, value)
 end
 
 function m.showIntegerAsDec()

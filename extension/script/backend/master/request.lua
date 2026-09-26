@@ -1,9 +1,16 @@
-local mgr = require 'backend.master.mgr'
-local response = require 'backend.master.response'
-local event = require 'backend.master.event'
-local ev = require 'backend.event'
-local utility = require 'luadebug.utility'
-local resolve_config = require 'backend.master.resolve_config'
+-- backend/master/request.lua
+--
+-- DAP request handlers for the master side: launch/attach, breakpoints,
+-- threads, stack frames, and disassembly. Each handler translates the
+-- editor's request into worker-thread commands via mgr and shapes the
+-- response with the DAP wire keys the client expects.
+
+local mgr = require('backend.master.mgr')
+local response = require('backend.master.response')
+local event = require('backend.master.event')
+local ev = require('backend.event')
+local utility = require('luadebug.utility')
+local resolve_config = require('backend.master.resolve_config')
 
 local request = {}
 
@@ -19,17 +26,17 @@ local config = {
 }
 
 ev.on('close', function()
-    state = "none"
+    state = 'none'
     event.terminated()
 end)
 
 local function checkThreadId(req, threadId)
     if type(threadId) ~= 'number' then
-        response.error(req, "No threadId")
+        response.error(req, 'No threadId')
         return
     end
     if not mgr.hasThread(threadId) then
-        response.error(req, "Not found thread ["..threadId.."]")
+        response.error(req, 'Not found thread [' .. threadId .. ']')
         return
     end
     return true
@@ -46,7 +53,7 @@ end
 function request.attach(req)
     resolve_config(req.arguments)
     response.success(req)
-    state = "initializing"
+    state = 'initializing'
     mgr.setKeepSessionAlive(req.arguments.keepSessionAlive)
     config = {
         initialize = req.arguments,
@@ -90,7 +97,7 @@ local function initializeWorkerBreakpoints(w, source, breakpoints, content)
 end
 
 local function jsonvalue(v)
-    local json = require "common.json"
+    local json = require('common.json')
     if json.null == v then
         return
     end
@@ -103,7 +110,7 @@ local function initializeWorker(w)
         config = config.initialize,
     })
     for key, bp in pairs(config.breakpoints) do
-        if type(key) == "string" or (key >> 32) == w then
+        if type(key) == 'string' or (key >> 32) == w then
             initializeWorkerBreakpoints(w, bp[1], bp[2], bp[3])
         end
     end
@@ -134,14 +141,14 @@ local function initializeWorker(w)
 end
 
 ev.on('worker-ready', function(w)
-    if state == "initialized" then
+    if state == 'initialized' then
         initializeWorker(w)
     end
 end)
 
 function request.configurationDone(req)
     response.success(req)
-    state = "initialized"
+    state = 'initialized'
     for w in pairs(mgr.workers()) do
         initializeWorker(w)
     end
@@ -158,10 +165,10 @@ local function skipBOM(s)
     if not s then
         return
     end
-    if s:sub(1, 3) == "\xEF\xBB\xBF" then
+    if s:sub(1, 3) == '\xEF\xBB\xBF' then
         s = s:sub(4)
     end
-    if s:sub(1, 1) == "#" then
+    if s:sub(1, 1) == '#' then
         local pos = s:find('\n', 2)
         if pos then
             s = s:sub(pos + 1)
@@ -171,7 +178,7 @@ local function skipBOM(s)
 end
 
 local function isValidPath(path)
-    local prefix = path:match "^(%a+):"
+    local prefix = path:match('^(%a+):')
     return not (prefix and #prefix > 1)
 end
 
@@ -183,12 +190,11 @@ function request.setBreakpoints(req)
         bp.endColumn = nil
         bp.id = genBreakpointID()
         bp.verified = false
-        bp.message = invalidPath
-            and ("Does not support path: `%s`"):format(args.source.path)
-            or "Wait verify. (The source file is not loaded.)"
+        bp.message = invalidPath and ('Does not support path: `%s`'):format(args.source.path)
+            or 'Wait verify. (The source file is not loaded.)'
     end
     response.success(req, {
-        breakpoints = args.breakpoints
+        breakpoints = args.breakpoints,
     })
     if invalidPath then
         return
@@ -203,17 +209,17 @@ function request.setBreakpoints(req)
             args.breakpoints,
             content,
         }
-        if state == "initialized" then
+        if state == 'initialized' then
             initializeWorkerBreakpoints(w, args.source, args.breakpoints, content)
         end
     else
-        --TODO path 无视大小写？
+        --TODO: should path matching ignore case?
         config.breakpoints[args.source.path] = {
             args.source,
             args.breakpoints,
             content,
         }
-        if state == "initialized" then
+        if state == 'initialized' then
             for w in pairs(mgr.workers()) do
                 initializeWorkerBreakpoints(w, args.source, args.breakpoints, content)
             end
@@ -226,17 +232,17 @@ function request.setFunctionBreakpoints(req)
     for _, bp in ipairs(args.breakpoints) do
         bp.id = genBreakpointID()
         bp.verified = false
-        bp.message = "Wait verify."
+        bp.message = 'Wait verify.'
     end
     response.success(req, {
-        breakpoints = args.breakpoints
+        breakpoints = args.breakpoints,
     })
     config.function_breakpoints = args.breakpoints
-    if state == "initialized" then
-        mgr.workerBroadcast {
+    if state == 'initialized' then
+        mgr.workerBroadcast({
             cmd = 'setFunctionBreakpoints',
             breakpoints = args.breakpoints,
-        }
+        })
     end
 end
 
@@ -245,14 +251,14 @@ function request.setInstructionBreakpoints(req)
     for _, bp in ipairs(args.breakpoints) do
         bp.id = genBreakpointID()
         bp.verified = false
-        bp.message = "Wait verify."
+        bp.message = 'Wait verify.'
     end
     response.success(req, { breakpoints = args.breakpoints })
     config.instruction_breakpoints = {}
     for _, bp in ipairs(args.breakpoints) do
         local ref = bp.instructionReference
-        if type(ref) == "string" then
-            local threadId, rest = ref:match("^inst_(%d+)x(.+)$")
+        if type(ref) == 'string' then
+            local threadId, rest = ref:match('^inst_(%d+)x(.+)$')
             threadId = tonumber(threadId)
             if threadId and rest then
                 bp.instructionReference = rest
@@ -260,7 +266,7 @@ function request.setInstructionBreakpoints(req)
             end
         end
     end
-    if state == "initialized" then
+    if state == 'initialized' then
         for w in pairs(mgr.workers()) do
             mgr.workerSend(w, {
                 cmd = 'setInstructionBreakpoints',
@@ -279,7 +285,7 @@ function request.setExceptionBreakpoints(req)
         breakpoints[#breakpoints + 1] = {
             id = id,
             verified = false,
-            message = "Wait verify."
+            message = 'Wait verify.',
         }
         filter[#filter + 1] = {
             id = id,
@@ -288,9 +294,9 @@ function request.setExceptionBreakpoints(req)
         }
     end
     for _, filterId in ipairs(args.filters) do
-        addExceptionBreakpoint {
-            filterId = filterId
-        }
+        addExceptionBreakpoint({
+            filterId = filterId,
+        })
     end
     if args.filterOptions then
         for _, opt in ipairs(args.filterOptions) do
@@ -301,11 +307,11 @@ function request.setExceptionBreakpoints(req)
         breakpoints = breakpoints,
     })
     config.exception_breakpoints = filter
-    if state == "initialized" then
-        mgr.workerBroadcast {
+    if state == 'initialized' then
+        mgr.workerBroadcast({
             cmd = 'setExceptionBreakpoints',
             arguments = filter,
-        }
+        })
     end
 end
 
@@ -327,7 +333,7 @@ end
 function request.scopes(req)
     local args = req.arguments
     if type(args.frameId) ~= 'number' then
-        response.error(req, "No frameId")
+        response.error(req, 'No frameId')
         return
     end
 
@@ -366,11 +372,11 @@ end
 function request.evaluate(req)
     local args = req.arguments
     if type(args.frameId) ~= 'number' then
-        response.error(req, "Please pause to evaluate expressions")
+        response.error(req, 'Please pause to evaluate expressions')
         return
     end
     if type(args.expression) ~= 'string' then
-        response.error(req, "Error expression")
+        response.error(req, 'Error expression')
         return
     end
     local threadId = args.frameId >> 24
@@ -398,13 +404,13 @@ function request.disconnect(req)
     if args.terminateDebuggee == nil then
         args.terminateDebuggee = not not config.launch
     end
-    mgr.workerBroadcast {
+    mgr.workerBroadcast({
         cmd = 'disconnect',
-    }
+    })
     if args.suspendDebuggee then
-        mgr.workerBroadcast {
+        mgr.workerBroadcast({
             cmd = 'suspend',
-        }
+        })
     elseif args.terminateDebuggee then
         if closeProcess then
             mgr.setTerminateDebuggeeCallback(function()
@@ -423,12 +429,13 @@ function request.terminate(req)
         return
     end
     --TODO:
-    --  现在调试器激活是会屏蔽SIGINT，导致closeprocess无法生效，所以需要先将调试器关闭，再调用closeprocess。
-    --  或许需要让调试器和SIGINT不再冲突。
+    --  The debugger activation masks SIGINT, which prevents closeprocess
+    --  from working, so disconnect the debugger before calling closeprocess.
+    --  Ideally the debugger and SIGINT would stop conflicting.
     --
-    mgr.workerBroadcast {
+    mgr.workerBroadcast({
         cmd = 'disconnect',
-    }
+    })
     mgr.setTerminateDebuggeeCallback(function()
         closeProcess = true
         utility.closeprocess()
@@ -439,9 +446,9 @@ end
 function request.restart(req)
     local args = req.arguments.arguments
     response.success(req)
-    mgr.workerBroadcast {
+    mgr.workerBroadcast({
         cmd = 'disconnect',
-    }
+    })
     mgr.setTerminateDebuggeeCallback(function()
         if args then
             config.initialize = args
@@ -477,9 +484,9 @@ function request.pause(req)
 end
 
 function request.continue(req)
-    mgr.workerBroadcast {
-        cmd = 'run'
-    }
+    mgr.workerBroadcast({
+        cmd = 'run',
+    })
     response.success(req, {
         allThreadsContinued = true,
     })
@@ -495,11 +502,11 @@ function request.next(req)
         cmd = 'stepOver',
     })
     mgr.workerBroadcastExclude(threadId, {
-        cmd = 'run'
+        cmd = 'run',
     })
-    event.continued {
+    event.continued({
         allThreadsContinued = true,
-    }
+    })
     response.success(req)
 end
 
@@ -513,11 +520,11 @@ function request.stepOut(req)
         cmd = 'stepOut',
     })
     mgr.workerBroadcastExclude(threadId, {
-        cmd = 'run'
+        cmd = 'run',
     })
-    event.continued {
+    event.continued({
         allThreadsContinued = true,
-    }
+    })
     response.success(req)
 end
 
@@ -531,11 +538,11 @@ function request.stepIn(req)
         cmd = 'stepIn',
     })
     mgr.workerBroadcastExclude(threadId, {
-        cmd = 'run'
+        cmd = 'run',
     })
-    event.continued {
+    event.continued({
         allThreadsContinued = true,
-    }
+    })
     response.success(req)
 end
 
@@ -603,11 +610,11 @@ end
 
 function request.loadedSources(req)
     response.success(req, {
-        sources = {}
+        sources = {},
     })
-    mgr.workerBroadcast {
-        cmd = 'loadedSources'
-    }
+    mgr.workerBroadcast({
+        cmd = 'loadedSources',
+    })
 end
 
 function request.restartFrame(req)
@@ -627,11 +634,11 @@ end
 function request.readMemory(req)
     local args = req.arguments
     local memoryReference = args.memoryReference
-    local threadId, refId = memoryReference:match "memory_(%d+)x(%d+)"
+    local threadId, refId = memoryReference:match('memory_(%d+)x(%d+)')
     threadId = tonumber(threadId)
     refId = tonumber(refId)
     if not threadId or not refId then
-        response.error(req, "Error memoryReference")
+        response.error(req, 'Error memoryReference')
         return
     end
     if not checkThreadId(req, threadId) then
@@ -650,11 +657,11 @@ end
 function request.writeMemory(req)
     local args = req.arguments
     local memoryReference = args.memoryReference
-    local threadId, refId = memoryReference:match "memory_(%d+)x(%d+)"
+    local threadId, refId = memoryReference:match('memory_(%d+)x(%d+)')
     threadId = tonumber(threadId)
     refId = tonumber(refId)
     if not threadId or not refId then
-        response.error(req, "Error memoryReference")
+        response.error(req, 'Error memoryReference')
         return
     end
     if not checkThreadId(req, threadId) then
@@ -675,14 +682,14 @@ function request.disassemble(req)
     local args = req.arguments
     local memoryReference = args.memoryReference
     -- inst_<threadId>x<rest> (from instructionPointerReference)
-    local threadId, refId = memoryReference:match("inst_(%d+)x(.+)$")
+    local threadId, refId = memoryReference:match('inst_(%d+)x(.+)$')
     if not refId then
         -- memory_<threadId>x<refId> (from variable with memoryReference)
-        threadId, refId = memoryReference:match("memory_(%d+)x(%d+)")
+        threadId, refId = memoryReference:match('memory_(%d+)x(%d+)')
     end
     threadId = tonumber(threadId)
     if not threadId or not refId then
-        response.error(req, "Invalid memoryReference")
+        response.error(req, 'Invalid memoryReference')
         return
     end
     if not checkThreadId(req, threadId) then
@@ -702,16 +709,16 @@ end
 
 function request.customRequestShowIntegerAsDec(req)
     response.success(req)
-    mgr.workerBroadcast {
-        cmd = 'customRequestShowIntegerAsDec'
-    }
+    mgr.workerBroadcast({
+        cmd = 'customRequestShowIntegerAsDec',
+    })
 end
 
 function request.customRequestShowIntegerAsHex(req)
     response.success(req)
-    mgr.workerBroadcast {
-        cmd = 'customRequestShowIntegerAsHex'
-    }
+    mgr.workerBroadcast({
+        cmd = 'customRequestShowIntegerAsHex',
+    })
 end
 
 --function print(...v)

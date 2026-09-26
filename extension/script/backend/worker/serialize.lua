@@ -1,8 +1,15 @@
-local rdebug = require 'luadebug.visitor'
+-- backend/worker/serialize.lua
+--
+-- Renders a debuggee value as Lua source text for the "copy value" /
+-- clipboard evaluate path. Recursion is capped by SERIALIZE_DEPTH_MAX and
+-- already-seen tables print as `<table>` so cyclic structures terminate.
+-- Hash keys are sorted for deterministic output.
+
+local rdebug = require('luadebug.visitor')
 
 local NEWLINE <const> = '\n'
 local INDENT <const> = '    '
-local DEPTH <const> = 10
+local SERIALIZE_DEPTH_MAX = 10
 
 local level
 local out
@@ -28,17 +35,25 @@ local function floatToString(x)
 end
 
 local function isIdentifier(str)
-    return type(str) == 'string' and str:match("^[_%a][_%a%d]*$")
+    return type(str) == 'string' and str:match('^[_%a][_%a%d]*$')
 end
 
 local TypeOrders = {
-    ['number'] = 1,['boolean'] = 2,['string'] = 3,['table'] = 4,['function'] = 5,['userdata'] = 6,['thread'] = 7
+    ['number'] = 1,
+    ['boolean'] = 2,
+    ['string'] = 3,
+    ['table'] = 4,
+    ['function'] = 5,
+    ['userdata'] = 6,
+    ['thread'] = 7,
 }
 
 local function sortKeys(a, b)
     a, b = a[1], b[1]
     local ta, tb = type(a), type(b)
-    if ta == tb and (ta == 'string' or ta == 'number') then return a < b end
+    if ta == tb and (ta == 'string' or ta == 'number') then
+        return a < b
+    end
     local dta, dtb = TypeOrders[ta], TypeOrders[tb]
     if dta and dtb then
         return TypeOrders[ta] < TypeOrders[tb]
@@ -60,16 +75,18 @@ local function newline()
 end
 
 local function putKey(k)
-    if isIdentifier(k) then return puts(k) end
-    puts("[")
+    if isIdentifier(k) then
+        return puts(k)
+    end
+    puts('[')
     putValue(k)
-    puts("]")
+    puts(']')
 end
 
 local function putTable(t, uniquekey)
     if visited[uniquekey] then
         puts('<table>')
-    elseif level >= DEPTH then
+    elseif level >= SERIALIZE_DEPTH_MAX then
         puts('{...}')
     else
         visited[uniquekey] = true
@@ -80,7 +97,9 @@ local function putTable(t, uniquekey)
         local count = 0
         local arrayt = rdebug.tablearrayv(t)
         for i = 1, #arrayt do
-            if count > 0 then puts(',') end
+            if count > 0 then
+                puts(',')
+            end
             puts(' ')
             putValue(arrayt[i])
             count = count + 1
@@ -96,7 +115,9 @@ local function putTable(t, uniquekey)
 
         for i = 1, #kvs do
             local kv = kvs[i]
-            if count > 0 then puts(',') end
+            if count > 0 then
+                puts(',')
+            end
             newline()
             putKey(kv[1])
             puts(' = ')
@@ -106,7 +127,9 @@ local function putTable(t, uniquekey)
 
         local metatable = rdebug.getmetatablev(t)
         if metatable then
-            if count > 0 then puts(',') end
+            if count > 0 then
+                puts(',')
+            end
             newline()
             puts('<metatable> = ')
             putValue(metatable)
@@ -125,21 +148,23 @@ end
 function putValue(v)
     local type, value = rdebug.value(v)
     if type == 'string' then
-        puts(("%q"):format(value))
+        puts(('%q'):format(value))
     elseif type == 'float' then
         puts(floatToString(value))
-    elseif type == 'integer' or value == 'boolean' or value == 'nil' then
+    elseif type == 'integer' or type == 'boolean' or type == 'nil' then
         puts(tostring(value))
     elseif type == 'table' then
         putTable(v, value)
     else
-        puts('<'..type..'>')
+        puts('<' .. type .. '>')
     end
 end
 
+---@param root any Debuggee value to render.
+---@return string source Lua source text describing the value.
 return function(root)
-    level   = 0
-    out     = {}
+    level = 0
+    out = {}
     visited = {}
     putValue(root)
     return table.concat(out)

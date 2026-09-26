@@ -1,3 +1,8 @@
+-- backend/worker/crc32.lua
+--
+-- Sliced-by-16 CRC-32 (IEEE polynomial, reflected). Used by source.lua to
+-- hash in-memory chunk sources into stable numeric source references.
+
 local string_byte = string.byte
 local crc_table = {}
 local POLY <const> = 0xEDB88320
@@ -7,17 +12,22 @@ for i = 0, 255 do
     for _ = 1, 8 do
         local b = crc & 1
         crc = crc >> 1
-        if b == 1 then crc = crc ~ POLY end
+        if b == 1 then
+            crc = crc ~ POLY
+        end
     end
     crc_table[i] = crc
 end
 
-return function (s, crc)
+---@param s string Bytes to hash.
+---@param crc integer? Running checksum to continue, or nil to start fresh.
+---@return integer checksum CRC-32 of the input.
+return function(s, crc)
     crc = ~(crc or 0) & 0xffffffff
     local sz = #s
     for i = 1, sz - 15, 16 do
-        local s0, s1, s2, s3, s4, s5, s6, s7
-            , s8, s9, sa, sb, sc, sd, se, sf = string_byte(s, i, i + 15)
+        local s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, sa, sb, sc, sd, se, sf =
+            string_byte(s, i, i + 15)
         crc = crc_table[(crc & 0xFF) ~ s0] ~ (crc >> 8)
         crc = crc_table[(crc & 0xFF) ~ s1] ~ (crc >> 8)
         crc = crc_table[(crc & 0xFF) ~ s2] ~ (crc >> 8)

@@ -1,6 +1,12 @@
-local mgr = require 'backend.master.mgr'
-local event = require 'backend.master.event'
-local response = require 'backend.master.response'
+-- backend/master/threads.lua
+--
+-- Thread enumeration for the master side: maps worker threads to DAP thread
+-- ids and answers the `threads` request. A worker appears here once it has
+-- registered with the master.
+
+local mgr = require('backend.master.mgr')
+local event = require('backend.master.event')
+local response = require('backend.master.response')
 
 local CMD = {}
 
@@ -30,10 +36,10 @@ end
 
 function CMD.eventThread(w, req)
     req.threadId = w
-    if req.reason == "started" then
-        mgr.setThreadStatus(w, "connect")
-    elseif req.reason == "exited" then
-        mgr.setThreadStatus(w, "disconnect")
+    if req.reason == 'started' then
+        mgr.setThreadStatus(w, 'connect')
+    elseif req.reason == 'exited' then
+        mgr.setThreadStatus(w, 'disconnect')
     end
     event.thread(req)
 end
@@ -61,7 +67,10 @@ function CMD.stackTrace(w, req)
             frame.source.sourceReference = (w << 32) | frame.source.sourceReference
         end
         if frame.instructionPointerReference then
-            frame.instructionPointerReference = ("inst_%dx%s"):format(w, frame.instructionPointerReference)
+            frame.instructionPointerReference = ('inst_%dx%s'):format(
+                w,
+                frame.instructionPointerReference
+            )
         end
     end
     response.success(req, req.body)
@@ -78,7 +87,7 @@ function CMD.evaluate(w, req)
         req.body.variablesReference = 0
     end
     if req.body.memoryReference then
-        req.body.memoryReference = "memory_" .. w .. "x" .. req.body.memoryReference
+        req.body.memoryReference = 'memory_' .. w .. 'x' .. req.body.memoryReference
     end
     response.success(req, req.body)
 end
@@ -120,7 +129,7 @@ function CMD.variables(w, req)
             var.variablesReference = 0
         end
         if var.memoryReference then
-            var.memoryReference = "memory_" .. w .. "x" .. var.memoryReference
+            var.memoryReference = 'memory_' .. w .. 'x' .. var.memoryReference
         end
     end
     response.success(req, req.body)
@@ -162,7 +171,7 @@ function CMD.disassemble(w, req)
     if req.body.instructions then
         for _, inst in ipairs(req.body.instructions) do
             if inst.instructionReference then
-                inst.instructionReference = ("inst_%dx%s"):format(w, inst.instructionReference)
+                inst.instructionReference = ('inst_%dx%s'):format(w, inst.instructionReference)
             end
         end
     end
@@ -170,7 +179,7 @@ function CMD.disassemble(w, req)
 end
 
 function CMD.eventMemory(w, req)
-    req.memoryReference = "memory_" .. w .. "x" .. req.memoryReference
+    req.memoryReference = 'memory_' .. w .. 'x' .. req.memoryReference
     event.memory(req)
 end
 

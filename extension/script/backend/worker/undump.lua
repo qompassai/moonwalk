@@ -1,4 +1,10 @@
-local unpack_buf = ""
+-- backend/worker/undump.lua
+--
+-- Parses Lua bytecode (string.dump output) back into function prototype
+-- tables: constants, code, line info, and nested prototypes. Used by
+-- parser.lua to build breakpoint line maps without running the chunk.
+
+local unpack_buf = ''
 local unpack_pos = 1
 local function unpack_setpos(...)
     unpack_pos = select(-1, ...)
@@ -9,34 +15,35 @@ local function unpack(fmt)
 end
 
 local function LoadByte()
-    return unpack "B"
+    return unpack('B')
 end
 
 local function LoadNumber()
-    return unpack "n"
+    return unpack('n')
 end
 
 local function LoadCharN(n)
-    return unpack("c" .. n)
+    return unpack('c' .. n)
 end
 
 local function LoadStringRaw(n)
-    return unpack("c" .. n)
+    return unpack('c' .. n)
 end
 
-local undump53; do
+local undump53
+do
     local function LoadInt()
-        return unpack "i"
+        return unpack('i')
     end
 
     local function LoadInteger()
-        return unpack "j"
+        return unpack('j')
     end
 
     local function LoadString()
         local size = LoadByte()
         if size == 0xFF then
-            size = unpack "T"
+            size = unpack('T')
         end
         if size == 0 then
             return nil
@@ -50,27 +57,31 @@ local undump53; do
         f.sizecode = LoadInt()
         f.code = {}
         for i = 1, f.sizecode do
-            f.code[i] = unpack "i4"
+            f.code[i] = unpack('i4')
         end
     end
 
     local function LoadConstants(f)
-        local function makevariant(t, v) return t | (v << 4) end
-        local LUA_TNIL     = 0
+        local function makevariant(t, v)
+            return t | (v << 4)
+        end
+        local LUA_TNIL = 0
         local LUA_TBOOLEAN = 1
-        local LUA_TNUMBER  = 3
-        local LUA_TSTRING  = 4
-        local LUA_TNUMFLT  = makevariant(LUA_TNUMBER, 0)
-        local LUA_TNUMINT  = makevariant(LUA_TNUMBER, 1)
-        local LUA_TSHRSTR  = makevariant(LUA_TSTRING, 0)
-        local LUA_TLNGSTR  = makevariant(LUA_TSTRING, 1)
-        f.sizek            = LoadInt()
-        f.k                = {}
+        local LUA_TNUMBER = 3
+        local LUA_TSTRING = 4
+        local LUA_TNUMFLT = makevariant(LUA_TNUMBER, 0)
+        local LUA_TNUMINT = makevariant(LUA_TNUMBER, 1)
+        local LUA_TSHRSTR = makevariant(LUA_TSTRING, 0)
+        local LUA_TLNGSTR = makevariant(LUA_TSTRING, 1)
+        f.sizek = LoadInt()
+        f.k = {}
         for i = 1, f.sizek do
             local t = LoadByte()
             if t == LUA_TNIL then
             elseif t == LUA_TBOOLEAN then
-                f.k[i] = LoadByte()
+                -- Bytecode stores booleans as a byte (0/1); normalize to a
+                -- real Lua boolean so downstream comparisons behave.
+                f.k[i] = LoadByte() ~= 0
             elseif t == LUA_TNUMFLT then
                 f.k[i] = LoadNumber()
             elseif t == LUA_TNUMINT then
@@ -80,7 +91,7 @@ local undump53; do
             elseif t == LUA_TLNGSTR then
                 f.k[i] = LoadString()
             else
-                error(string.format("unknown constant type: <%d, %d>", t >> 4, t & 0xf))
+                error(string.format('unknown constant type: <%d, %d>', t >> 4, t & 0xf))
             end
         end
     end
@@ -149,15 +160,15 @@ local undump53; do
         local LUAC_INT = 0x5678
         local LUAC_NUM = 370.5
         -- int
-        assert(string.packsize "i" == LoadByte())
+        assert(string.packsize('i') == LoadByte())
         -- size_t
-        assert(string.packsize "T" == LoadByte())
+        assert(string.packsize('T') == LoadByte())
         -- Instruction
-        assert(string.packsize "i4" == LoadByte())
+        assert(string.packsize('i4') == LoadByte())
         -- lua_Integer
-        assert(string.packsize "j" == LoadByte())
+        assert(string.packsize('j') == LoadByte())
         -- lua_Number
-        assert(string.packsize "n" == LoadByte())
+        assert(string.packsize('n') == LoadByte())
         assert(LoadInteger() == LUAC_INT)
         assert(LoadNumber() == LUAC_NUM)
     end
@@ -170,9 +181,10 @@ local undump53; do
     end
 end
 
-local undump54; do
+local undump54
+do
     local function LoadInteger()
-        return unpack "j"
+        return unpack('j')
     end
 
     -- shifted_limit is the pre-shifted maximum value for x in each iteration.
@@ -183,10 +195,10 @@ local undump54; do
         repeat
             b = LoadByte()
             if x > shifted_limit then
-                error("integer overflow")
+                error('integer overflow')
             end
             x = (x << 7) | (b & 0x7f)
-        until ((b & 0x80) ~= 0)
+        until (b & 0x80) ~= 0
         return x
     end
 
@@ -208,25 +220,27 @@ local undump54; do
         f.sizecode = LoadInt()
         f.code = {}
         for i = 1, f.sizecode do
-            f.code[i] = unpack "i4"
+            f.code[i] = unpack('i4')
         end
     end
 
     local function LoadConstants(f)
-        local function makevariant(t, v) return t | (v << 4) end
-        local LUA_TNIL     = 0
+        local function makevariant(t, v)
+            return t | (v << 4)
+        end
+        local LUA_TNIL = 0
         local LUA_TBOOLEAN = 1
-        local LUA_TNUMBER  = 3
-        local LUA_TSTRING  = 4
-        local LUA_VNIL     = makevariant(LUA_TNIL, 0)
-        local LUA_VFALSE   = makevariant(LUA_TBOOLEAN, 0)
-        local LUA_VTRUE    = makevariant(LUA_TBOOLEAN, 1)
-        local LUA_VNUMINT  = makevariant(LUA_TNUMBER, 0)
-        local LUA_VNUMFLT  = makevariant(LUA_TNUMBER, 1)
-        local LUA_VSHRSTR  = makevariant(LUA_TSTRING, 0)
-        local LUA_VLNGSTR  = makevariant(LUA_TSTRING, 1)
-        f.sizek            = LoadInt()
-        f.k                = {}
+        local LUA_TNUMBER = 3
+        local LUA_TSTRING = 4
+        local LUA_VNIL = makevariant(LUA_TNIL, 0)
+        local LUA_VFALSE = makevariant(LUA_TBOOLEAN, 0)
+        local LUA_VTRUE = makevariant(LUA_TBOOLEAN, 1)
+        local LUA_VNUMINT = makevariant(LUA_TNUMBER, 0)
+        local LUA_VNUMFLT = makevariant(LUA_TNUMBER, 1)
+        local LUA_VSHRSTR = makevariant(LUA_TSTRING, 0)
+        local LUA_VLNGSTR = makevariant(LUA_TSTRING, 1)
+        f.sizek = LoadInt()
+        f.k = {}
         for i = 1, f.sizek do
             local t = LoadByte()
             if t == LUA_VNIL then
@@ -241,7 +255,7 @@ local undump54; do
             elseif t == LUA_VSHRSTR or t == LUA_VLNGSTR then
                 f.k[i] = LoadString()
             else
-                error(string.format("unknown constant type: <%d, %d>", t >> 4, t & 0xf))
+                error(string.format('unknown constant type: <%d, %d>', t >> 4, t & 0xf))
             end
         end
     end
@@ -270,7 +284,7 @@ local undump54; do
         f.sizelineinfo = LoadInt()
         f.lineinfo = {}
         for i = 1, f.sizelineinfo do
-            f.lineinfo[i] = unpack "b"
+            f.lineinfo[i] = unpack('b')
         end
         f.sizeabslineinfo = LoadInt()
         f.abslineinfo = {}
@@ -318,11 +332,11 @@ local undump54; do
         local LUAC_INT = 0x5678
         local LUAC_NUM = 370.5
         -- Instruction
-        assert(string.packsize "i4" == LoadByte())
+        assert(string.packsize('i4') == LoadByte())
         -- lua_Integer
-        assert(string.packsize "j" == LoadByte())
+        assert(string.packsize('j') == LoadByte())
         -- lua_Number
-        assert(string.packsize "n" == LoadByte())
+        assert(string.packsize('n') == LoadByte())
         assert(LoadInteger() == LUAC_INT)
         assert(LoadNumber() == LUAC_NUM)
     end
@@ -335,7 +349,8 @@ local undump54; do
     end
 end
 
-local undump55; do
+local undump55
+do
     local cached = {}
 
     local function LoadAlign(align)
@@ -354,10 +369,10 @@ local undump55; do
         repeat
             b = LoadByte()
             if x > shifted_limit then
-                error("integer overflow")
+                error('integer overflow')
             end
             x = (x << 7) | (b & 0x7f)
-        until ((b & 0x80) == 0)
+        until (b & 0x80) == 0
         return x
     end
 
@@ -388,7 +403,7 @@ local undump55; do
                 return nil
             end
             if not cached[idx] then
-                error("invalid string index")
+                error('invalid string index')
             end
             return cached[idx]
         end
@@ -404,25 +419,27 @@ local undump55; do
         LoadAlign(4)
         f.code = {}
         for i = 1, f.sizecode do
-            f.code[i] = unpack "i4"
+            f.code[i] = unpack('i4')
         end
     end
 
     local function LoadConstants(f)
-        local function makevariant(t, v) return t | (v << 4) end
-        local LUA_TNIL     = 0
+        local function makevariant(t, v)
+            return t | (v << 4)
+        end
+        local LUA_TNIL = 0
         local LUA_TBOOLEAN = 1
-        local LUA_TNUMBER  = 3
-        local LUA_TSTRING  = 4
-        local LUA_VNIL     = makevariant(LUA_TNIL, 0)
-        local LUA_VFALSE   = makevariant(LUA_TBOOLEAN, 0)
-        local LUA_VTRUE    = makevariant(LUA_TBOOLEAN, 1)
-        local LUA_VNUMINT  = makevariant(LUA_TNUMBER, 0)
-        local LUA_VNUMFLT  = makevariant(LUA_TNUMBER, 1)
-        local LUA_VSHRSTR  = makevariant(LUA_TSTRING, 0)
-        local LUA_VLNGSTR  = makevariant(LUA_TSTRING, 1)
-        f.sizek            = LoadInt()
-        f.k                = {}
+        local LUA_TNUMBER = 3
+        local LUA_TSTRING = 4
+        local LUA_VNIL = makevariant(LUA_TNIL, 0)
+        local LUA_VFALSE = makevariant(LUA_TBOOLEAN, 0)
+        local LUA_VTRUE = makevariant(LUA_TBOOLEAN, 1)
+        local LUA_VNUMINT = makevariant(LUA_TNUMBER, 0)
+        local LUA_VNUMFLT = makevariant(LUA_TNUMBER, 1)
+        local LUA_VSHRSTR = makevariant(LUA_TSTRING, 0)
+        local LUA_VLNGSTR = makevariant(LUA_TSTRING, 1)
+        f.sizek = LoadInt()
+        f.k = {}
         for i = 1, f.sizek do
             local t = LoadByte()
             if t == LUA_VNIL then
@@ -437,7 +454,7 @@ local undump55; do
             elseif t == LUA_VSHRSTR or t == LUA_VLNGSTR then
                 f.k[i] = LoadString()
             else
-                error(string.format("unknown constant type: <%d, %d>", t >> 4, t & 0xf))
+                error(string.format('unknown constant type: <%d, %d>', t >> 4, t & 0xf))
             end
         end
     end
@@ -466,7 +483,7 @@ local undump55; do
         f.sizelineinfo = LoadInt()
         f.lineinfo = {}
         for i = 1, f.sizelineinfo do
-            f.lineinfo[i] = unpack "b"
+            f.lineinfo[i] = unpack('b')
         end
         f.sizeabslineinfo = LoadInt()
         f.abslineinfo = {}
@@ -474,8 +491,8 @@ local undump55; do
             LoadAlign(4)
             for i = 1, f.sizeabslineinfo do
                 f.abslineinfo[i] = {}
-                f.abslineinfo[i].pc = unpack "i"
-                f.abslineinfo[i].line = unpack "i"
+                f.abslineinfo[i].pc = unpack('i')
+                f.abslineinfo[i].line = unpack('i')
             end
         end
         f.sizelocvars = LoadInt()
@@ -517,17 +534,21 @@ local undump55; do
         local LUAC_INT = -0x5678
         local LUAC_INST = 0x12345678
         local LUAC_NUM = -370.5
-        assert(string.packsize "i" == LoadByte())
-        assert(unpack "i" == LUAC_INT)
-        assert(string.packsize "i4" == LoadByte())
-        assert(unpack "i4" == LUAC_INST)
-        assert(string.packsize "j" == LoadByte())
-        assert(unpack "j" == LUAC_INT)
-        assert(string.packsize "n" == LoadByte())
-        assert(unpack "n" == LUAC_NUM)
+        assert(string.packsize('i') == LoadByte())
+        assert(unpack('i') == LUAC_INT)
+        assert(string.packsize('i4') == LoadByte())
+        assert(unpack('i4') == LUAC_INST)
+        assert(string.packsize('j') == LoadByte())
+        assert(unpack('j') == LUAC_INT)
+        assert(string.packsize('n') == LoadByte())
+        assert(unpack('n') == LUAC_NUM)
     end
 
     function undump55(cl)
+        -- String cache starts empty on every call: later constants may
+        -- refer back to earlier ones by index, but entries must never
+        -- leak from a previously parsed chunk.
+        cached = {}
         CheckHeader()
         cl.nupvalues = LoadByte()
         cl.f = {}
@@ -538,10 +559,10 @@ end
 return function(bytes)
     unpack_pos = 1
     unpack_buf = bytes
-    assert(LoadCharN(4) == "\x1bLua")
+    assert(LoadCharN(4) == '\x1bLua')
     local Version = LoadByte()
     assert(LoadByte() == 0)
-    assert(LoadCharN(6) == "\x19\x93\r\n\x1a\n")
+    assert(LoadCharN(6) == '\x19\x93\r\n\x1a\n')
     local cl = {}
     if Version == 0x53 then
         undump53(cl)
@@ -550,7 +571,7 @@ return function(bytes)
     elseif Version == 0x55 then
         undump55(cl)
     else
-        error(("unknown lua version: 0x%x"):format(Version))
+        error(('unknown lua version: 0x%x'):format(Version))
     end
     assert(unpack_pos == #unpack_buf + 1)
     assert(cl.nupvalues == cl.f.sizeupvalues)

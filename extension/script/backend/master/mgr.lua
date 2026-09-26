@@ -1,7 +1,13 @@
-local ev = require 'backend.event'
-local thread = require 'bee.thread'
-local stdio = require 'luadebug.stdio'
-local channel = require "bee.channel"
+-- backend/master/mgr.lua
+--
+-- Master-side thread and client bookkeeping: owns the DAP client connection,
+-- the worker-thread registry, and the broadcast fan-out used to push events
+-- (output, breakpoints, stop notifications) to every worker thread.
+
+local ev = require('backend.event')
+local thread = require('bee.thread')
+local stdio = require('luadebug.stdio')
+local channel = require('bee.channel')
 
 local redirect = {}
 local mgr = {}
@@ -33,9 +39,9 @@ local function event_close()
     if not initialized then
         return
     end
-    mgr.workerBroadcast {
+    mgr.workerBroadcast({
         cmd = 'terminated',
-    }
+    })
     ev.emit('close')
     initialized = false
     seq = 0
@@ -49,7 +55,7 @@ end
 function mgr.init(io)
     socket = io
     --socket.debug(true)
-    masterThread = assert(channel.query 'DbgMaster')
+    masterThread = assert(channel.query('DbgMaster'))
     socket.event_close(event_close)
     return true
 end
@@ -73,10 +79,10 @@ function mgr.initConfig(config)
     end
     local outputCapture = lst2map(config.initialize.outputCapture)
     if outputCapture.stdout then
-        redirect.stdout = stdio.redirect 'stdout'
+        redirect.stdout = stdio.redirect('stdout')
     end
     if outputCapture.stderr then
-        redirect.stderr = stdio.redirect 'stderr'
+        redirect.stderr = stdio.redirect('stderr')
     end
 end
 
@@ -92,15 +98,15 @@ function mgr.workerSend(w, msg)
 end
 
 function mgr.workerBroadcast(msg)
-    for _, channel in pairs(threadChannel) do
-        channel:push(msg)
+    for _, chan in pairs(threadChannel) do
+        chan:push(msg)
     end
 end
 
 function mgr.workerBroadcastExclude(exclude, msg)
-    for w, channel in pairs(threadChannel) do
+    for w, chan in pairs(threadChannel) do
         if w ~= exclude then
-            channel:push(msg)
+            chan:push(msg)
         end
     end
 end
@@ -116,10 +122,10 @@ end
 function mgr.threads()
     local t = {}
     for threadId, status in pairs(threadStatus) do
-        if status == "connect" then
+        if status == 'connect' then
             t[#t + 1] = {
-                name = (threadName[threadId] or "Thread (${id})"):gsub("%$%{([^}]*)%}", {
-                    id = threadId
+                name = (threadName[threadId] or 'Thread (${id})'):gsub('%$%{([^}]*)%}', {
+                    id = threadId,
                 }),
                 id = threadId,
             }
@@ -140,16 +146,16 @@ function mgr.initWorker(WorkerIdent)
     local threadId = genThreadId()
     threadChannel[threadId] = assert(channel.query(workerChannel))
     threadCatalog[WorkerIdent] = threadId
-    threadStatus[threadId] = "disconnect"
+    threadStatus[threadId] = 'disconnect'
     threadName[threadId] = nil
     ev.emit('worker-ready', threadId)
 end
 
 function mgr.setThreadStatus(threadId, status)
     threadStatus[threadId] = status
-    if terminateDebuggeeCallback and status == "disconnect" then
+    if terminateDebuggeeCallback and status == 'disconnect' then
         for _, s in pairs(threadStatus) do
-            if s == "connect" then
+            if s == 'connect' then
                 return
             end
         end
@@ -159,7 +165,7 @@ end
 
 function mgr.setTerminateDebuggeeCallback(callback)
     for _, s in pairs(threadStatus) do
-        if s == "connect" then
+        if s == 'connect' then
             terminateDebuggeeCallback = callback
             return
         end
@@ -185,27 +191,27 @@ local function update_redirect()
     if redirect.stderr then
         local res = redirect.stderr:read(redirect.stderr:peek())
         if res then
-            local event = require 'backend.master.event'
-            event.output {
+            local event = require('backend.master.event')
+            event.output({
                 category = 'stderr',
                 output = res,
-            }
+            })
         end
     end
     if redirect.stdout then
         local res = redirect.stdout:read(redirect.stdout:peek())
         if res then
-            local event = require 'backend.master.event'
-            event.output {
+            local event = require('backend.master.event')
+            event.output({
                 category = 'stdout',
                 output = res,
-            }
+            })
         end
     end
 end
 
 local function update_once()
-    local threadCMD = require 'backend.master.threads'
+    local threadCMD = require('backend.master.threads')
     while true do
         local ok, w, cmd, msg = masterThread:pop()
         if not ok then
@@ -223,14 +229,14 @@ local function update_once()
     end
     if req.type == 'request' then
         -- TODO
-        local request = require 'backend.master.request'
+        local request = require('backend.master.request')
         if not initialized then
             if req.command == 'initialize' then
                 initialized = true
                 request.initialize(req)
             else
-                local response = require 'backend.master.response'
-                response.error(req, ("`%s` not yet implemented.(birth)"):format(req.command))
+                local response = require('backend.master.response')
+                response.error(req, ('`%s` not yet implemented.(birth)'):format(req.command))
             end
         else
             local f = request[req.command]
@@ -239,8 +245,8 @@ local function update_once()
                     return true
                 end
             else
-                local response = require 'backend.master.response'
-                response.error(req, ("`%s` not yet implemented.(idle)"):format(req.command))
+                local response = require('backend.master.response')
+                response.error(req, ('`%s` not yet implemented.(idle)'):format(req.command))
             end
         end
     end
@@ -253,10 +259,10 @@ function mgr.update()
             thread.sleep(10)
         end
     end
-    local event = require 'backend.master.event'
+    local event = require('backend.master.event')
     event.terminated()
     socket.closeall()
-    channel.destroy("DbgMaster")
+    channel.destroy('DbgMaster')
 end
 
 function mgr.setClient(c)

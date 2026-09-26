@@ -6,18 +6,16 @@
 local utility = {}
 
 ---
---- * Windows下的行为
----  1. 向主线程发送WM_QUIT消息。
---- * 非Windows下的行为
----  1. 什么都不做
+--- * Behavior on Windows
+---  1. Posts a WM_QUIT message to the main thread.
+--- * Behavior elsewhere
+---  1. Does nothing
 ---
-function utility.closewindow()
-end
+function utility.closewindow() end
 
 ---
---- 发送SIGINT信号。
+--- Sends a SIGINT signal.
 ---
-function utility.closeprocess()
-end
+function utility.closeprocess() end
 
 return utility

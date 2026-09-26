@@ -1,146 +1,145 @@
 local platform = ...
-platform = platform or "unknown-unknown"
+platform = platform or 'unknown-unknown'
 
-local OS, ARCH = platform:match "^([^-]+)-([^-]+)$"
+local OS, ARCH = platform:match('^([^-]+)-([^-]+)$')
 
 local json = {
-    name = "lua-debug",
-    version = "2.3.0",
-    publisher = "actboy168",
-    displayName = "Lua Debug",
-    description = "VSCode debugger extension for Lua",
-    icon = "images/logo.png",
+    name = 'lua-debug',
+    version = '2.3.0',
+    publisher = 'actboy168',
+    displayName = 'Lua Debug',
+    description = 'VSCode debugger extension for Lua',
+    icon = 'images/logo.png',
     private = true,
     author = {
-        name = "actboy168",
+        name = 'actboy168',
     },
     bugs = {
-        url = "https://github.com/actboy168/lua-debug/issues",
+        url = 'https://github.com/actboy168/lua-debug/issues',
     },
     repository = {
-        type = "git",
-        url = "https://github.com/actboy168/lua-debug",
+        type = 'git',
+        url = 'https://github.com/actboy168/lua-debug',
     },
     keywords = {
-        "lua",
-        "debug",
-        "debuggers",
+        'lua',
+        'debug',
+        'debuggers',
     },
     categories = {
-        "Debuggers",
+        'Debuggers',
     },
     engines = {
-        vscode = "^1.75.0",
+        vscode = '^1.75.0',
     },
     extensionKind = {
-        "workspace",
+        'workspace',
     },
-    main = "./js/extension.js",
+    main = './js/extension.js',
     activationEvents = {
-        "onDebugInitialConfigurations",
-        "onDebugDynamicConfigurations",
-        "onDebugResolve:lua",
+        'onDebugInitialConfigurations',
+        'onDebugDynamicConfigurations',
+        'onDebugResolve:lua',
     },
     capabilities = {
         untrustedWorkspaces = {
-            description = "Debugging is disabled in Restricted Mode.",
+            description = 'Debugging is disabled in Restricted Mode.',
             supported = false,
         },
     },
     contributes = {
         breakpoints = {
             {
-                language = "lua",
+                language = 'lua',
             },
             {
-                language = "html",
+                language = 'html',
             },
         },
         commands = {
             {
-                command = "extension.lua-debug.runEditorContents",
-                icon = "$(play)",
-                title = "Run File",
+                command = 'extension.lua-debug.runEditorContents',
+                icon = '$(play)',
+                title = 'Run File',
             },
             {
-                command = "extension.lua-debug.debugEditorContents",
-                icon = "$(debug-alt-small)",
-                title = "Debug File",
+                command = 'extension.lua-debug.debugEditorContents',
+                icon = '$(debug-alt-small)',
+                title = 'Debug File',
             },
             {
-                command = "extension.lua-debug.showIntegerAsDec",
-                title = "Show as Dec",
+                command = 'extension.lua-debug.showIntegerAsDec',
+                title = 'Show as Dec',
             },
             {
-                command = "extension.lua-debug.showIntegerAsHex",
-                title = "Show as Hex",
+                command = 'extension.lua-debug.showIntegerAsHex',
+                title = 'Show as Hex',
             },
         },
         configuration = {
             properties = {
-                ["lua.debug.variables.showIntegerAsHex"] = {
+                ['lua.debug.variables.showIntegerAsHex'] = {
                     default = false,
-                    description = "Show integer as hex.",
-                    type = "boolean",
+                    description = 'Show integer as hex.',
+                    type = 'boolean',
                 },
             },
         },
         debuggers = {
             {
-                type = "lua",
+                type = 'lua',
                 languages = {
-                    "lua",
+                    'lua',
                 },
-                label = "Lua Debug",
+                label = 'Lua Debug',
                 configurationSnippets = {
                     {
-                        label = "Lua Debug: Launch Script",
-                        description = "A new configuration for launching a lua debug program",
+                        label = 'Lua Debug: Launch Script',
+                        description = 'A new configuration for launching a lua debug program',
                         body = {
-                            type = "lua",
-                            request = "launch",
-                            name = "${1:launch}",
+                            type = 'lua',
+                            request = 'launch',
+                            name = '${1:launch}',
                             stopOnEntry = true,
-                            program = "^\"\\${workspaceFolder}/${2:main.lua}\"",
-                            arg = {
-                            },
+                            program = '^"\\${workspaceFolder}/${2:main.lua}"',
+                            arg = {},
                         },
                     },
                     {
-                        label = "Lua Debug: Attach",
-                        description = "A new configuration for attaching a lua debug program",
+                        label = 'Lua Debug: Attach',
+                        description = 'A new configuration for attaching a lua debug program',
                         body = {
-                            type = "lua",
-                            request = "attach",
-                            name = "${1:attach}",
+                            type = 'lua',
+                            request = 'attach',
+                            name = '${1:attach}',
                             stopOnEntry = true,
-                            address = "127.0.0.1:4278",
-                        }
-                    }
-                }
-            }
+                            address = '127.0.0.1:4278',
+                        },
+                    },
+                },
+            },
         },
         menus = {
-            ["debug/variables/context"] = {
+            ['debug/variables/context'] = {
                 {
-                    command = "extension.lua-debug.showIntegerAsDec",
-                    group = "1_view",
+                    command = 'extension.lua-debug.showIntegerAsDec',
+                    group = '1_view',
                     when = "debugConfigurationType == 'lua' && debugProtocolVariableMenuContext == 'integer/hex'",
                 },
                 {
-                    command = "extension.lua-debug.showIntegerAsHex",
-                    group = "1_view",
+                    command = 'extension.lua-debug.showIntegerAsHex',
+                    group = '1_view',
                     when = "debugConfigurationType == 'lua' && debugProtocolVariableMenuContext == 'integer/dec'",
                 },
             },
-            ["editor/title/run"] = {
+            ['editor/title/run'] = {
                 {
-                    command = "extension.lua-debug.runEditorContents",
-                    when = "resourceLangId == lua",
+                    command = 'extension.lua-debug.runEditorContents',
+                    when = 'resourceLangId == lua',
                 },
                 {
-                    command = "extension.lua-debug.debugEditorContents",
-                    when = "resourceLangId == lua",
+                    command = 'extension.lua-debug.debugEditorContents',
+                    when = 'resourceLangId == lua',
                 },
             },
         },
@@ -151,85 +150,83 @@ local attributes = {}
 
 attributes.common = {
     luaVersion = {
-        default = "lua54",
+        default = 'lua54',
         enum = {
-            "lua51",
-            "lua52",
-            "lua53",
-            "lua54",
-            "lua55",
-            "lua-latest",
-            "luajit",
+            'lua51',
+            'lua52',
+            'lua53',
+            'lua54',
+            'lua55',
+            'lua-latest',
+            'luajit',
         },
-        markdownDescription = "%lua.debug.launch.luaVersion.description%",
-        type = "string",
+        markdownDescription = '%lua.debug.launch.luaVersion.description%',
+        type = 'string',
     },
     outputCapture = {
-        default = {
-        },
+        default = {},
         items = {
             enum = {
-                "print",
-                "io.write",
-                "stdout",
-                "stderr",
+                'print',
+                'io.write',
+                'stdout',
+                'stderr',
             },
         },
-        markdownDescription = "From where to capture output messages: print or stdout/stderr streams.",
-        type = "array",
+        markdownDescription = 'From where to capture output messages: print or stdout/stderr streams.',
+        type = 'array',
     },
     pathFormat = {
-        default = "path",
+        default = 'path',
         enum = {
-            "path",
-            "linuxpath",
+            'path',
+            'linuxpath',
         },
-        markdownDescription = "Path format",
-        type = "string",
+        markdownDescription = 'Path format',
+        type = 'string',
     },
     sourceFormat = {
-        default = "path",
+        default = 'path',
         enum = {
-            "path",
-            "string",
-            "linuxpath",
+            'path',
+            'string',
+            'linuxpath',
         },
-        markdownDescription = "Source format",
-        type = "string",
+        markdownDescription = 'Source format',
+        type = 'string',
     },
     sourceMaps = {
         default = {
             {
-                "./*",
-                "${workspaceFolder}/*",
+                './*',
+                '${workspaceFolder}/*',
             },
         },
-        markdownDescription = "The source path of the remote host and the source path of local.",
-        type = "array",
+        markdownDescription = 'The source path of the remote host and the source path of local.',
+        type = 'array',
     },
     skipFiles = {
-        default = {
-        },
+        default = {},
         items = {
-            type = "string",
+            type = 'string',
         },
-        markdownDescription = "An array of glob patterns for files to skip when debugging.",
-        type = "array",
+        markdownDescription = 'An array of glob patterns for files to skip when debugging.',
+        type = 'array',
     },
     stopOnEntry = {
         default = false,
-        markdownDescription = "Automatically stop after entry.",
-        type = "boolean",
+        markdownDescription = 'Automatically stop after entry.',
+        type = 'boolean',
     },
     stopOnThreadEntry = {
         default = true,
-        markdownDescription = "Automatically stop after thread entry.",
-        type = "boolean",
+        markdownDescription = 'Automatically stop after thread entry.',
+        type = 'boolean',
     },
     keepSessionAlive = {
         default = false,
-        markdownDescription = "Keep the debug session alive when the current debugged Lua VM is closed and later recreated in the same process.",
-        type = "boolean",
+        markdownDescription = 'Keep the debug session alive when the current debugged Lua VM is closed and later recreated in the same process.',
+        type = 'boolean',
     },
     address = {
         markdownDescription = [[
@@ -237,231 +234,228 @@ Debugger address.
 1. IPv4 e.g. `127.0.0.1:4278`
 2. IPv6 e.g. `[::1]:4278`
 3. Unix domain socket e.g. `@c:\\unix.sock`]],
-        type = "string",
+        type = 'string',
     },
     client = {
         default = true,
-        markdownDescription = "Choose whether to `connect` or `listen`.",
-        type = "boolean",
+        markdownDescription = 'Choose whether to `connect` or `listen`.',
+        type = 'boolean',
     },
     inject = {
-        default = "none",
-        markdownDescription = "How to inject debugger.",
+        default = 'none',
+        markdownDescription = 'How to inject debugger.',
         enum = {
-            "none",
+            'none',
         },
-        type = "string",
+        type = 'string',
     },
 }
 
-if OS == "win32" then
-    attributes.common.inject.default = "hook"
-    table.insert(attributes.common.inject.enum, "hook")
+if OS == 'win32' then
+    attributes.common.inject.default = 'hook'
+    table.insert(attributes.common.inject.enum, 'hook')
 else
-    if OS == "darwin" then
-        attributes.common.inject.default = "lldb"
-        table.insert(attributes.common.inject.enum, "hook")
+    if OS == 'darwin' then
+        attributes.common.inject.default = 'lldb'
+        table.insert(attributes.common.inject.enum, 'hook')
     else
-        attributes.common.inject.default = "gdb"
+        attributes.common.inject.default = 'gdb'
     end
-    table.insert(attributes.common.inject.enum, "lldb")
-    table.insert(attributes.common.inject.enum, "gdb")
+    table.insert(attributes.common.inject.enum, 'lldb')
+    table.insert(attributes.common.inject.enum, 'gdb')
     attributes.common.inject_executable = {
-        markdownDescription = "inject executable path",
+        markdownDescription = 'inject executable path',
         type = {
-            "string",
-            "null",
+            'string',
+            'null',
         },
     }
 end
 
 attributes.attach = {
     processId = {
-        default = "${command:pickProcess}",
-        markdownDescription = "Id of process to attach to.",
-        type = "string",
+        default = '${command:pickProcess}',
+        markdownDescription = 'Id of process to attach to.',
+        type = 'string',
     },
     processName = {
-        default = "lua.exe",
-        markdownDescription = "Name of process to attach to.",
-        type = "string",
+        default = 'lua.exe',
+        markdownDescription = 'Name of process to attach to.',
+        type = 'string',
     },
     waitForDebugger = {
         default = false,
-        markdownDescription = "Wait for debugger to attach. (It needs to be implemented in the debugging host.)",
-        type = "boolean",
+        markdownDescription = 'Wait for debugger to attach. (It needs to be implemented in the debugging host.)',
+        type = 'boolean',
     },
 }
 
 json.contributes.debuggers[1].variables = {
-    pickProcess = "extension.lua-debug.pickProcess",
+    pickProcess = 'extension.lua-debug.pickProcess',
 }
-
 
 attributes.launch = {
     luaexe = {
-        markdownDescription = "Absolute path to the lua exe.",
-        type = "string",
+        markdownDescription = 'Absolute path to the lua exe.',
+        type = 'string',
     },
     program = {
-        default = "${workspaceFolder}/main.lua",
-        markdownDescription = "Lua program to debug - set this to the path of the script",
-        type = "string",
+        default = '${workspaceFolder}/main.lua',
+        markdownDescription = 'Lua program to debug - set this to the path of the script',
+        type = 'string',
     },
     arg = {
-        default = {
-        },
-        markdownDescription = "Command line argument, arg[1] ... arg[n]",
-        type = "array",
+        default = {},
+        markdownDescription = 'Command line argument, arg[1] ... arg[n]',
+        type = 'array',
     },
     arg0 = {
-        default = {
-        },
-        markdownDescription = "Command line argument, arg[-n] ... arg[0]",
+        default = {},
+        markdownDescription = 'Command line argument, arg[-n] ... arg[0]',
         type = {
-            "string",
-            "array",
+            'string',
+            'array',
         },
     },
     path = {
-        default = "${workspaceFolder}/?.lua",
-        markdownDescription = "%lua.debug.launch.path.description%",
+        default = '${workspaceFolder}/?.lua',
+        markdownDescription = '%lua.debug.launch.path.description%',
         type = {
-            "string",
-            "array",
-            "null",
+            'string',
+            'array',
+            'null',
         },
     },
     cpath = {
-        markdownDescription = "%lua.debug.launch.cpath.description%",
+        markdownDescription = '%lua.debug.launch.cpath.description%',
         type = {
-            "string",
-            "array",
-            "null",
+            'string',
+            'array',
+            'null',
         },
     },
     luaArch = {
-        markdownDescription = "%lua.debug.launch.luaArch.description%",
-        type = "string",
+        markdownDescription = '%lua.debug.launch.luaArch.description%',
+        type = 'string',
     },
     cwd = {
-        default = "${workspaceFolder}",
-        markdownDescription = "Working directory at program startup",
+        default = '${workspaceFolder}',
+        markdownDescription = 'Working directory at program startup',
         type = {
-            "string",
-            "null",
+            'string',
+            'null',
         },
     },
     env = {
         additionalProperties = {
             type = {
-                "string",
-                "null",
+                'string',
+                'null',
             },
         },
         default = {
-            PATH = "${workspaceFolder}",
+            PATH = '${workspaceFolder}',
         },
-        markdownDescription = "Environment variables passed to the program. The value `null` removes thevariable from the environment.",
-        type = "object",
+        markdownDescription = 'Environment variables passed to the program. The value `null` removes thevariable from the environment.',
+        type = 'object',
     },
     console = {
-        default = "integratedTerminal",
+        default = 'integratedTerminal',
         enum = {
-            "internalConsole",
-            "integratedTerminal",
-            "externalTerminal",
+            'internalConsole',
+            'integratedTerminal',
+            'externalTerminal',
         },
         enummarkdownDescriptions = {
-            "%lua.debug.launch.console.internalConsole.description%",
-            "%lua.debug.launch.console.integratedTerminal.description%",
-            "%lua.debug.launch.console.externalTerminal.description%",
+            '%lua.debug.launch.console.internalConsole.description%',
+            '%lua.debug.launch.console.integratedTerminal.description%',
+            '%lua.debug.launch.console.externalTerminal.description%',
         },
-        markdownDescription = "%lua.debug.launch.console.description%",
-        type = "string",
+        markdownDescription = '%lua.debug.launch.console.description%',
+        type = 'string',
     },
     runtimeExecutable = {
-        default = OS == "win32" and "${workspaceFolder}/lua.exe" or "${workspaceFolder}/lua",
-        markdownDescription = "Runtime to use. Either an absolute path or the name of a runtime availableon the PATH.",
+        default = OS == 'win32' and '${workspaceFolder}/lua.exe' or '${workspaceFolder}/lua',
+        markdownDescription = 'Runtime to use. Either an absolute path or the name of a runtime availableon the PATH.',
         type = {
-            "string",
-            "null",
+            'string',
+            'null',
         },
     },
     runtimeArgs = {
-        default = "${workspaceFolder}/main.lua",
-        markdownDescription = "Arguments passed to the runtime executable.",
+        default = '${workspaceFolder}/main.lua',
+        markdownDescription = 'Arguments passed to the runtime executable.',
         type = {
-            "string",
-            "array",
-            "null",
+            'string',
+            'array',
+            'null',
         },
     },
 }
 
-if OS == "win32" or OS == "darwin" then
+if OS == 'win32' or OS == 'darwin' then
     local snippets = json.contributes.debuggers[1].configurationSnippets
-    snippets[#snippets+1] = {
-        label = "Lua Debug: Launch Process",
-        description = "A new configuration for launching a lua process",
+    snippets[#snippets + 1] = {
+        label = 'Lua Debug: Launch Process',
+        description = 'A new configuration for launching a lua process',
         body = {
-            type = "lua",
-            request = "launch",
-            name = "${1:launch process}",
+            type = 'lua',
+            request = 'launch',
+            name = '${1:launch process}',
             stopOnEntry = true,
-            runtimeExecutable = "^\"\\${workspaceFolder}/lua.exe\"",
-            runtimeArgs = "^\"\\${workspaceFolder}/${2:main.lua}\"",
-        }
+            runtimeExecutable = '^"\\${workspaceFolder}/lua.exe"',
+            runtimeArgs = '^"\\${workspaceFolder}/${2:main.lua}"',
+        },
     }
-    snippets[#snippets+1] = {
-        label = "Lua Debug: Attach Process",
-        description = "A new configuration for attaching a lua debug program",
+    snippets[#snippets + 1] = {
+        label = 'Lua Debug: Attach Process',
+        description = 'A new configuration for attaching a lua debug program',
         body = {
-            type = "lua",
-            request = "attach",
-            name = "${1:attach}",
+            type = 'lua',
+            request = 'attach',
+            name = '${1:attach}',
             stopOnEntry = true,
-            processId = "^\"\\${command:pickProcess}\"",
-        }
+            processId = '^"\\${command:pickProcess}"',
+        },
     }
 end
 
-if OS == "win32" then
+if OS == 'win32' then
     attributes.common.sourceCoding = {
-        default = "utf8",
+        default = 'utf8',
         enum = {
-            "utf8",
-            "ansi",
+            'utf8',
+            'ansi',
         },
-        markdownDescription = "%lua.debug.launch.sourceCoding.description%",
-        type = "string",
+        markdownDescription = '%lua.debug.launch.sourceCoding.description%',
+        type = 'string',
     }
     attributes.common.useWSL = {
         default = true,
-        description = "Use Windows Subsystem for Linux.",
-        type = "boolean",
+        description = 'Use Windows Subsystem for Linux.',
+        type = 'boolean',
     }
-    attributes.launch.luaexe.default = "${workspaceFolder}/lua.exe"
-    attributes.launch.cpath.default = "${workspaceFolder}/?.dll"
+    attributes.launch.luaexe.default = '${workspaceFolder}/lua.exe'
+    attributes.launch.cpath.default = '${workspaceFolder}/?.dll'
 else
-    attributes.launch.luaexe.default = "${workspaceFolder}/lua"
-    attributes.launch.cpath.default = "${workspaceFolder}/?.so"
+    attributes.launch.luaexe.default = '${workspaceFolder}/lua'
+    attributes.launch.cpath.default = '${workspaceFolder}/?.so'
 end
 
 local function SupportedArchs()
-    if OS == "win32" then
-        return "x86_64", "x86"
-    elseif OS == "darwin" then
-        if ARCH == "arm64" then
-            return "arm64", "x86_64"
+    if OS == 'win32' then
+        return 'x86_64', 'x86'
+    elseif OS == 'darwin' then
+        if ARCH == 'arm64' then
+            return 'arm64', 'x86_64'
         else
-            return "x86_64"
+            return 'x86_64'
         end
-    elseif OS == "linux" then
-        if ARCH == "arm64" then
-            return "arm64"
+    elseif OS == 'linux' then
+        if ARCH == 'arm64' then
+            return 'arm64'
         else
-            return "x86_64"
+            return 'x86_64'
         end
     end
 end
@@ -480,7 +474,15 @@ json.contributes.debuggers[1].configurationAttributes = {
 }
 
 local configuration = json.contributes.configuration.properties
-for _, name in ipairs { "luaArch", "luaVersion", "sourceCoding", "console", "path", "cpath", "address" } do
+for _, name in ipairs({
+    'luaArch',
+    'luaVersion',
+    'sourceCoding',
+    'console',
+    'path',
+    'cpath',
+    'address',
+}) do
     local attr = attributes.launch[name] or attributes.attach[name]
     if attr then
         local cfg = {}
@@ -493,7 +495,7 @@ for _, name in ipairs { "luaArch", "luaVersion", "sourceCoding", "console", "pat
                 cfg[k] = v
             end
         end
-        configuration["lua.debug.settings."..name] = cfg
+        configuration['lua.debug.settings.' .. name] = cfg
     end
 end
 

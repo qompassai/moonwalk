@@ -1,13 +1,18 @@
+-- undump unit harness: round-trips functions through string.dump/undump and
+-- checks the parser's source map. Stubs backend.worker.evaluate.dump so the
+-- test does not depend on the running debugger.
+--
+-- Run with one of:
 -- publish\runtime\win32\lua53\lua.exe test\undump.lua
 -- publish\runtime\win64\lua54\lua.exe test\undump.lua
 -- publish\runtime\win32\lua53\lua.exe test\undump.lua
 -- publish\runtime\win64\lua54\lua.exe test\undump.lua
 
-package.path = "extension/script/?.lua"
-local undump = require "backend.worker.undump"
-local parser = require "backend.worker.parser"
+package.path = 'extension/script/?.lua'
+local undump = require('backend.worker.undump')
+local parser = require('backend.worker.parser')
 
-package.loaded["backend.worker.evaluate"] = {
+package.loaded['backend.worker.evaluate'] = {
     dump = function(content)
         return true, string.dump(content)
     end,
@@ -18,12 +23,12 @@ local function getproto(f)
     return cl.f
 end
 
-getproto(function()end)
-getproto(assert(loadfile "extension/script/backend/worker/undump.lua"))
+getproto(function() end)
+getproto(assert(loadfile('extension/script/backend/worker/undump.lua')))
 
-local si = parser(assert(loadfile "extension/script/frontend/main.lua"))
-assert(si["20-34"])
-assert(si["20-34"][25] == nil)
-assert(si["20-34"][27] == true)
+local si = parser(assert(loadfile('extension/script/frontend/main.lua')))
+assert(si['20-34'])
+assert(si['20-34'][25] == nil)
+assert(si['20-34'][27] == true)
 
-print "ok"
+print('ok')

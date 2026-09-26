@@ -1,32 +1,32 @@
-local lm = require 'luamake'
+local lm = require('luamake')
 
-lm:copy 'copy_json' {
+lm:copy('copy_json')({
     inputs = '3rd/json.lua/json.lua',
-    outputs = 'publish/script/common/json.lua'
-}
+    outputs = 'publish/script/common/json.lua',
+})
 
-lm:copy 'copy_bootstrap' {
+lm:copy('copy_bootstrap')({
     inputs = 'extension/script/bootstrap.lua',
     outputs = 'publish/bin/main.lua',
-}
+})
 
-lm:runlua 'package_json' {
+lm:runlua('package_json')({
     script = 'compile/common/write_json.lua',
-    args = {'$in', '$out', lm.platform},
-    inputs = "compile/common/package_json.lua",
-    outputs = "extension/package.json",
-}
+    args = { '$in', '$out', lm.platform },
+    inputs = 'compile/common/package_json.lua',
+    outputs = 'extension/package.json',
+})
 
-lm:runlua 'copy_extension' {
+lm:runlua('copy_extension')({
     deps = 'package_json',
     script = 'compile/copy_extension.lua',
-}
+})
 
-lm:phony 'common' {
+lm:phony('common')({
     deps = {
         'copy_json',
         'copy_bootstrap',
         'copy_extension',
         'package_json',
-    }
-}
+    },
+})
