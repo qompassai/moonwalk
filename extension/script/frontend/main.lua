@@ -23,6 +23,13 @@ local function run()
 
     while true do
         proxy.update()
+        -- The stdio transport reports EOF when the DAP client goes away
+        -- without sending `disconnect`. Without this the adapter spins
+        -- forever on a dead client, holding the debuggee (if any).
+        if vscode.eof and vscode.eof() then
+            proxy.shutdown()
+            break
+        end
     end
 end
 

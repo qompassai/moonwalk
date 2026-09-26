@@ -455,4 +455,16 @@ function m.init(io)
     client = io
 end
 
+--- Shut down cleanly: close the backend connection (if any) and reap a
+--- spawned debuggee so it never becomes a zombie. Called when the client
+--- transport reports EOF (the DAP client went away without `disconnect`).
+--- Does not exit the process; the caller decides.
+function m.shutdown()
+    if server then
+        server.closeall()
+        server = nil
+    end
+    reap_debuggee()
+end
+
 return m

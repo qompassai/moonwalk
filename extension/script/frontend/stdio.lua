@@ -3,7 +3,9 @@
 -- DAP transport over the adapter's own stdin/stdout: binary mode on Windows
 -- (so the protocol framing bytes survive), unbuffered on both ends. `peek`
 -- makes reads non-blocking; an empty read yields "" so the pump keeps
--- spinning instead of stalling on EOF.
+-- spinning when no data is available yet. A closed stdin (client gone
+-- without `disconnect`) is detected via poll() in the C++ layer and
+-- surfaces as EOF: the adapter shuts down instead of spinning forever.
 
 local subprocess = require('bee.subprocess')
 local platform = require('bee.platform')
@@ -24,10 +26,23 @@ local function send(v)
     STDOUT:write(v)
 end
 
----@return string chunk Bytes currently available, or "" when none are.
+-- True once the stdin writer closed. peek() returns nil on EOF (the
+-- C++ layer distinguishes it from "no data yet" via poll()); without
+-- this the adapter spins forever when the DAP client goes away without
+-- sending `disconnect`.
+local eof = false
+
+---@return string|nil chunk Bytes available, "" when none yet, nil on EOF.
 local function recv()
+    if eof then
+        return nil
+    end
     local n = peek(STDIN)
-    if n == nil or n == 0 then
+    if n == nil then
+        eof = true
+        return nil
+    end
+    if n == 0 then
         return ''
     end
     return STDIN:read(n)
@@ -48,7 +63,16 @@ end
 
 ---@return table? pkg Next received DAP message, or nil when incomplete.
 function m.recvmsg()
-    return proto.recv(recv(), stat)
+    local chunk = recv()
+    if chunk == nil then
+        return nil
+    end
+    return proto.recv(chunk, stat)
+end
+
+---@return boolean eof True once the stdin writer closed (EOF).
+function m.eof()
+    return eof
 end
 
 return m

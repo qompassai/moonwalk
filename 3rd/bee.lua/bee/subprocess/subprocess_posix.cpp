@@ -5,6 +5,7 @@
 #include <bee/utility/dynarray.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/socket.h>
@@ -332,6 +333,8 @@ namespace bee::subprocess {
                 file_handle::from_native(fds[1])
             };
         }
+        // Returns: >=0 byte count (0 = no data), -1 = EOF (writer closed),
+        // -2 = error.
         int peek(file_handle h) noexcept {
             // MOONWALK DIVERGENCE (upstream: recv(MSG_PEEK) only): a DAP
             // client spawns the adapter with *pipe* stdio, and recv() on a
@@ -341,7 +344,22 @@ namespace bee::subprocess {
             // the socket peek as a fallback.
             int n = 0;
             if (::ioctl(h.value(), FIONREAD, &n) == 0) {
-                return n;
+                if (n > 0) {
+                    return n;
+                }
+                // FIONREAD says 0: either no data yet, or the writer closed
+                // (EOF). poll() distinguishes: POLLHUP/POLLERR with no
+                // POLLIN means the writer is gone. Without this the stdio
+                // transport spins forever on client disconnect.
+                struct pollfd pfd;
+                pfd.fd = h.value();
+                pfd.events = POLLIN;
+                pfd.revents = 0;
+                int pr = ::poll(&pfd, 1, 0);
+                if (pr > 0 && (pfd.revents & (POLLHUP | POLLERR)) && !(pfd.revents & POLLIN)) {
+                    return -1;
+                }
+                return 0;
             }
             char tmp[256];
             int rc = recv(h.value(), tmp, sizeof(tmp), MSG_PEEK | MSG_DONTWAIT);
@@ -351,7 +369,7 @@ namespace bee::subprocess {
                 if (errno == EAGAIN || errno == EINTR) {
                     return 0;
                 }
-                return -1;
+                return -2;
             }
             return rc;
         }

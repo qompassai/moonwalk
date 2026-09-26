@@ -432,6 +432,13 @@ namespace bee::lua_subprocess {
             return lua::return_error(L, "bad file descriptor");
         }
         int n = subprocess::pipe::peek(file_handle::from_file(p->f));
+        if (n == -1) {
+            // EOF: the writer closed. Not an error; the caller treats nil
+            // as end-of-stream (MOONWALK DIVERGENCE: upstream has no EOF
+            // signal here).
+            lua_pushnil(L);
+            return 1;
+        }
         if (n < 0) {
             return lua::return_sys_error(L, "subprocess::peek");
         }
