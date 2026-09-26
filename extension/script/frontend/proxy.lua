@@ -68,6 +68,12 @@ local pending_terminal = {}
 -- client's debug session always ends cleanly instead of hanging.
 local terminated_forwarded = false
 
+-- True once the backend has acknowledged `disconnect`. In the detach case
+-- (`terminateDebuggee: false`) the backend stays alive with the debuggee,
+-- so the frontend must tear itself down instead of waiting for a backend
+-- close that will never come; otherwise every detach leaks the adapter.
+local disconnect_acked = false
+
 ---@param pid integer Target process id.
 ---@return string address Backend unix-socket rendezvous address.
 local function getUnixAddress(pid)
@@ -114,6 +120,16 @@ local function check_launch_args(pkg)
     end
     if args.request ~= 'launch' and args.request ~= 'attach' then
         return nil, ('invalid `request`: %s'):format(tostring(args.request))
+    end
+    -- A launch without a program (and without a runtimeExecutable to run
+    -- instead) would silently start a dead session; fail fast with a
+    -- diagnostic instead.
+    if
+        args.request == 'launch'
+        and args.runtimeExecutable == nil
+        and type(args.program) ~= 'string'
+    then
+        return nil, 'missing `program` for launch.'
     end
     if args.processId ~= nil then
         local pid = args.processId
@@ -340,9 +356,11 @@ local function proxy_start(pkg)
         response_error(pkg, err)
         return
     end
-    -- New session: the previous session's `terminated` state must not leak
-    -- into this one, or a fresh debuggee's normal end would be swallowed.
+    -- New session: the previous session's `terminated`/`disconnect` state
+    -- must not leak into this one, or a fresh debuggee's normal end would
+    -- be swallowed.
     terminated_forwarded = false
+    disconnect_acked = false
     if args.request == 'attach' then
         proxy_attach(pkg)
     elseif args.request == 'launch' then
@@ -434,6 +452,13 @@ function m.update()
                 if pkg.type == 'event' and pkg.event == 'terminated' then
                     terminated_forwarded = true
                 end
+                if
+                    pkg.type == 'response'
+                    and pkg.command == 'disconnect'
+                    and pkg.success
+                then
+                    disconnect_acked = true
+                end
                 client.sendmsg(pkg)
             else
                 break
@@ -447,6 +472,19 @@ function m.update()
         else
             break
         end
+    end
+    -- Detach case: the debug session is over but the backend (and the
+    -- detached debuggee) live on. The frontend must exit now; the debuggee
+    -- is disowned (not killed, not reaped) so init reparents and reaps it.
+    -- Without this, every `terminateDebuggee: false` disconnect leaks the
+    -- full adapter stack.
+    if disconnect_acked then
+        debuggee = nil
+        if server then
+            server.closeall()
+            server = nil
+        end
+        os.exit(0, true)
     end
 end
 

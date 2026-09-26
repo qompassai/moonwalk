@@ -64,13 +64,16 @@ local function recv(s, bytes)
             or length ~= math.floor(length)
             or length > FRAME_MAX
         then
-            -- Not a DAP frame: drop the garbage instead of latching it.
-            s.bytes = ''
+            -- Not a DAP frame: skip past the bad separator and rescan, so
+            -- valid frames already sitting in the same read are not lost
+            -- with the garbage. The loop always terminates: each pass
+            -- strictly shrinks s.bytes.
+            s.bytes = s.bytes:sub(pos + 4)
             s.length = nil
-            return
+        else
+            s.bytes = s.bytes:sub(pos + 4)
+            s.length = length
         end
-        s.bytes = s.bytes:sub(pos + 4)
-        s.length = length
     end
 end
 
@@ -89,7 +92,17 @@ function m.recv(bytes, stat)
         end
         local ok, msg = pcall(json.decode, pkg)
         if ok then
-            return msg
+            -- A DAP message is always a JSON object. A bare number, bool,
+            -- or null decodes fine but is not a message; proxy.send()
+            -- indexes pkg.type, so letting one through is a one-frame
+            -- remote DoS of the whole session. Drop it here.
+            if type(msg) == 'table' then
+                return msg
+            end
+            if stat.debug then
+                print('[recv] dropped non-table JSON frame')
+            end
+            return nil
         end
         if stat.debug then
             print('[recv] dropped malformed JSON frame')
