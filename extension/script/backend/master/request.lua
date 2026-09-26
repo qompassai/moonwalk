@@ -51,7 +51,14 @@ function request.initialize(req)
 end
 
 function request.attach(req)
-    resolve_config(req.arguments)
+    local ok, err = resolve_config(req.arguments)
+
+    if not ok then
+        response.error(req, err)
+
+        return
+    end
+
     response.success(req)
     state = 'initializing'
     mgr.setKeepSessionAlive(req.arguments.keepSessionAlive)

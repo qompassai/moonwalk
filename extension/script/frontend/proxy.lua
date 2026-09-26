@@ -18,6 +18,56 @@ local client
 local initReq
 local m = {}
 
+-- The debuggee process handle for the active session, when the frontend
+-- spawned it (internalConsole launches). Held so the child is reaped on
+-- session teardown; otherwise a finished debuggee lingers as a zombie.
+-- (Upstream lua-debug 2.3.0 prints "may become a zombie process" and exits
+-- without reaping.) Terminal launches are spawned by the client, and
+-- attach paths spawn nothing, so neither sets this.
+local debuggee = nil
+
+-- Bounded reap: poll for exit, then kill a stuck child and reap it. Never
+-- blocks adapter shutdown forever on a hung debuggee.
+local REAP_TIMEOUT_MS = 2000
+local REAP_POLL_MS = 50
+
+local function reap_debuggee()
+    local proc = debuggee
+    debuggee = nil
+
+    if proc == nil then
+        return
+    end
+
+    local waited = 0
+
+    while proc:is_running() and waited < REAP_TIMEOUT_MS do
+        net.update(REAP_POLL_MS)
+        waited = waited + REAP_POLL_MS
+    end
+
+    if proc:is_running() then
+        proc:kill()
+    end
+
+    proc:wait()
+end
+
+-- Sequence counter for frontend-to-client reverse requests. DAP clients
+-- correlate responses by request_seq, so these must be unique.
+local reverse_seq = 0
+
+-- runInTerminal request seqs still awaiting the client's response.
+---@type table<integer, boolean>
+local pending_terminal = {}
+
+-- True once a `terminated` event has been forwarded to the client for the
+-- current session. The backend is supposed to send it when the debuggee
+-- ends, but if the backend connection drops first (or the backend dies
+-- without sending it), the frontend synthesizes one on close so the
+-- client's debug session always ends cleanly instead of hanging.
+local terminated_forwarded = false
+
 ---@param pid integer Target process id.
 ---@return string address Backend unix-socket rendezvous address.
 local function getUnixAddress(pid)
@@ -109,9 +159,11 @@ end
 
 ---@param args table `runInTerminal` arguments built by debuger_factory.
 local function request_runinterminal(args)
+    reverse_seq = reverse_seq + 1
+    pending_terminal[reverse_seq] = true
     client.sendmsg({
         type = 'request',
-        seq = 0,
+        seq = reverse_seq,
         command = 'runInTerminal',
         arguments = args,
     })
@@ -247,14 +299,16 @@ local function proxy_launch_console(pkg)
             response_error(pkg, err)
             return
         end
+        debuggee = process
     else
         local address
         server, address = create_server(args)
-        local ok, err = debuger_factory.create_luaexe_in_console(args, WORKDIR, address)
-        if not ok then
+        local process, err = debuger_factory.create_luaexe_in_console(args, WORKDIR, address)
+        if not process then
             response_error(pkg, err)
             return
         end
+        debuggee = process
     end
     return true
 end
@@ -286,6 +340,9 @@ local function proxy_start(pkg)
         response_error(pkg, err)
         return
     end
+    -- New session: the previous session's `terminated` state must not leak
+    -- into this one, or a fresh debuggee's normal end would be swallowed.
+    terminated_forwarded = false
     if args.request == 'attach' then
         proxy_attach(pkg)
     elseif args.request == 'launch' then
@@ -297,6 +354,22 @@ end
 local function send(pkg)
     if server then
         if pkg.type == 'response' and pkg.command == 'runInTerminal' then
+            local seq = pkg.request_seq
+
+            if pending_terminal[seq] then
+                pending_terminal[seq] = nil
+
+                if not pkg.success then
+                    -- The client could not start the terminal: the backend
+                    -- is waiting for a debuggee that will never connect.
+                    -- Tear the session down instead of hanging; closing the
+                    -- backend connection ends the adapter process, which
+                    -- ends the client's debug session.
+                    server.closeall()
+                    server = nil
+                end
+            end
+
             return
         end
         server.sendmsg(pkg)
@@ -324,11 +397,43 @@ function m.update()
     net.update(10)
     if server then
         server.event_close(function()
+            -- The backend is gone. Drain any final messages it managed to
+            -- send (like `terminated`) before the FIN, forwarding each to
+            -- the client so nothing is lost in the close race.
+            while true do
+                local pkg = server.recvmsg()
+                if not pkg then
+                    break
+                end
+                if pkg.type == 'event' and pkg.event == 'terminated' then
+                    terminated_forwarded = true
+                end
+                pcall(client.sendmsg, pkg)
+            end
+            -- If the backend died without a `terminated` event, synthesize
+            -- one: the DAP client must see the session end, otherwise it
+            -- hangs waiting for a debuggee that will never report back.
+            -- pcall: the client may already be gone; we're exiting anyway.
+            if not terminated_forwarded then
+                reverse_seq = reverse_seq + 1
+                pcall(client.sendmsg, {
+                    type = 'event',
+                    seq = reverse_seq,
+                    event = 'terminated',
+                })
+                terminated_forwarded = true
+            end
+            -- Reap the debuggee (if the frontend spawned one) before the
+            -- process goes away, so a finished child never becomes a zombie.
+            reap_debuggee()
             os.exit(0, true)
         end)
         while true do
             local pkg = server.recvmsg()
             if pkg then
+                if pkg.type == 'event' and pkg.event == 'terminated' then
+                    terminated_forwarded = true
+                end
                 client.sendmsg(pkg)
             else
                 break

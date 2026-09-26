@@ -1,9 +1,13 @@
 --- Validate and complete a debug configuration.
 ---
---- Mutates `config` in place (fills defaults, normalizes fields) and returns
---- nothing; callers use the mutated table.
+--- Mutates `config` in place (fills defaults, normalizes fields).
+--- Returns true on success, or nil plus an error message when the
+--- configuration is unusable; callers must turn the error into a DAP
+--- error response instead of spawning anything.
 ---
 --- @param config table Raw configuration table, mutated in place.
+--- @return boolean|nil ok True when the configuration is usable.
+--- @return string? err Human-readable reason when it is not.
 local function resolve_config(config)
     -- Apply common defaults.
     config.type = 'lua'
@@ -75,11 +79,13 @@ local function resolve_config(config)
         end
     end
 
-    -- Validate sourceMaps.
+    -- Validate sourceMaps. An invalid entry is a configuration error, not
+    -- a crash: the caller turns this into a DAP error response before any
+    -- debuggee is spawned.
     if type(config.sourceMaps) == 'table' then
         for _, sourceMap in ipairs(config.sourceMaps) do
             if type(sourceMap) ~= 'table' or #sourceMap ~= 2 then
-                error('Invalid sourceMaps.')
+                return nil, 'Invalid sourceMaps: each entry must be a [source, target] pair.'
             end
         end
     else
@@ -92,12 +98,18 @@ local function resolve_config(config)
     end
 
     -- Apply the default configuration.variables value. The backend cannot read
-    -- VS Code settings, so an empty table is used instead.
+    -- VS Code settings, so an empty table is used instead. Both levels are
+    -- defaulted: variables.lua dereferences config.configuration.variables,
+    -- so a bare `configuration = {}` must not leave variables as nil.
     if type(config.configuration) ~= 'table' then
         config.configuration = {
             variables = {},
         }
+    elseif type(config.configuration.variables) ~= 'table' then
+        config.configuration.variables = {}
     end
+
+    return true
 end
 
 return resolve_config

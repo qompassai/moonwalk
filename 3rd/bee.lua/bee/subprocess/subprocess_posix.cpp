@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <spawn.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -332,6 +333,16 @@ namespace bee::subprocess {
             };
         }
         int peek(file_handle h) noexcept {
+            // MOONWALK DIVERGENCE (upstream: recv(MSG_PEEK) only): a DAP
+            // client spawns the adapter with *pipe* stdio, and recv() on a
+            // pipe fails with ENOTSOCK, so the stdio transport silently
+            // received nothing on Linux/macOS. FIONREAD works on pipes,
+            // FIFOs, terminals, and sockets alike, so try it first and keep
+            // the socket peek as a fallback.
+            int n = 0;
+            if (::ioctl(h.value(), FIONREAD, &n) == 0) {
+                return n;
+            }
             char tmp[256];
             int rc = recv(h.value(), tmp, sizeof(tmp), MSG_PEEK | MSG_DONTWAIT);
             if (rc == 0) {
