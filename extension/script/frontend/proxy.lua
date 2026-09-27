@@ -85,11 +85,39 @@ local pending_terminal = {}
 -- client's debug session always ends cleanly instead of hanging.
 local terminated_forwarded = false
 
+---Forward a `terminated` event to the DAP client, at most once per session.
+---Every `terminated` the frontend emits — a backend event from the pump or
+---the close drain, or the synthesized fallback — goes through here. The
+---backend is supposed to emit it exactly once, but its close path can emit
+---a second one (backend/master/request.lua's `ev.on('close')` is not
+---covered by the master's sendTerminatedOnce guard); without this choke
+---point the frontend would pass both through and the client would see the
+---session end twice. A duplicate is dropped, never forwarded.
+---@param pkg table DAP `terminated` event to forward.
+---@return boolean forwarded True when this call forwarded the event.
+local function forward_terminated_once(pkg)
+    if terminated_forwarded then
+        return false
+    end
+    terminated_forwarded = true
+    -- pcall: the client may already be gone on the close path; a failed
+    -- send must not take the teardown down with it.
+    pcall(client.sendmsg, pkg)
+    return true
+end
+
 -- True once the backend has acknowledged `disconnect`. In the detach case
 -- (`terminateDebuggee: false`) the backend stays alive with the debuggee,
 -- so the frontend must tear itself down instead of waiting for a backend
 -- close that will never come; otherwise every detach leaks the adapter.
 local disconnect_acked = false
+
+-- True when the in-flight `disconnect` terminates the debuggee. A
+-- terminating disconnect must NOT take the `disconnect_acked` early exit:
+-- the backend drains in-flight output and emits `terminated` before it
+-- closes, and the frontend has to stay alive to forward those. Defaults
+-- to the backend's rule (`terminateDebuggee` defaults to true for launch).
+local disconnect_terminate = true
 
 ---@param pid integer Target process id.
 ---@return string address Backend unix-socket rendezvous address.
@@ -265,6 +293,15 @@ local function check_launch_args(pkg)
             return nil, ('invalid `%s`: expected a string, got %s'):format(key, type(args[key]))
         end
     end
+    -- Opt-in child-process auto-attach: the backend wraps os.execute /
+    -- io.popen in the debuggee and fires `startDebugging` reverse requests
+    -- for Lua children. Must be an explicit boolean; anything else is a
+    -- config typo, not a silent opt-in.
+    if args.autoAttachChildProcesses ~= nil and type(args.autoAttachChildProcesses) ~= 'boolean' then
+        return nil, ('invalid `autoAttachChildProcesses`: expected a boolean, got %s'):format(
+            type(args.autoAttachChildProcesses)
+        )
+    end
     if args.address ~= nil and not valid_address(args.address) then
         return nil, ('invalid `address`: %s'):format(args.address)
     end
@@ -317,6 +354,35 @@ end
 
 -- Seconds before an unanswered runInTerminal is treated as failed.
 local TERMINAL_TIMEOUT = 30
+
+---Ask the editor to open a debug session for a debuggee-spawned Lua
+-- child (see backend/worker/childwatch.lua). The child already runs its
+-- own backend listening on `spawn.address`, so the new session attaches
+-- to it; nothing is spawned here. Best-effort: editors that do not honor
+-- the `startDebugging` reverse request leave the child running under its
+-- own backend with no session attached.
+---@param spawn table {address=string, command=string, threadId=integer}.
+local function request_start_debugging(spawn)
+    reverse_seq = reverse_seq + 1
+    client.sendmsg({
+        type = 'request',
+        seq = reverse_seq,
+        command = 'startDebugging',
+        arguments = {
+            request = 'attach',
+            configuration = {
+                request = 'attach',
+                -- The debug-type id is client-specific (whatever the user
+                -- registered this adapter as); 'lua' is the conventional
+                -- default and clients remap as needed.
+                type = 'lua',
+                name = ('(child) %s'):format(spawn.command),
+                address = spawn.address,
+                client = true,
+            },
+        },
+    })
+end
 
 ---Answer timed-out runInTerminal requests with a launch error and tear down.
 local function reap_terminal_timeouts()
@@ -535,6 +601,7 @@ local function proxy_start(pkg)
     -- be swallowed.
     terminated_forwarded = false
     disconnect_acked = false
+    disconnect_terminate = args.request ~= 'attach'
     if args.request == 'attach' then
         proxy_attach(pkg)
     elseif args.request == 'launch' then
@@ -545,6 +612,17 @@ end
 ---@param pkg table DAP message traveling editor -> backend.
 local function send(pkg)
     if server then
+        if pkg.type == 'request' and pkg.command == 'disconnect' then
+            -- Remember whether this disconnect terminates: the acked
+            -- early exit below is detach-only. An explicit
+            -- `terminateDebuggee: false` detaches; anything else (true
+            -- or absent) terminates, and the frontend must wait for the
+            -- backend's close so the drain's `terminated` is forwarded.
+            local td = pkg.arguments and pkg.arguments.terminateDebuggee
+            if td ~= nil then
+                disconnect_terminate = td
+            end
+        end
         if pkg.type == 'response' and pkg.command == 'runInTerminal' then
             local seq = pkg.request_seq
 
@@ -602,22 +680,21 @@ function m.update()
                     break
                 end
                 if pkg.type == 'event' and pkg.event == 'terminated' then
-                    terminated_forwarded = true
+                    forward_terminated_once(pkg)
+                else
+                    pcall(client.sendmsg, pkg)
                 end
-                pcall(client.sendmsg, pkg)
             end
             -- If the backend died without a `terminated` event, synthesize
             -- one: the DAP client must see the session end, otherwise it
             -- hangs waiting for a debuggee that will never report back.
-            -- pcall: the client may already be gone; we're exiting anyway.
             if not terminated_forwarded then
                 reverse_seq = reverse_seq + 1
-                pcall(client.sendmsg, {
+                forward_terminated_once({
                     type = 'event',
                     seq = reverse_seq,
                     event = 'terminated',
                 })
-                terminated_forwarded = true
             end
             -- Reap the debuggee (if the frontend spawned one) before the
             -- process goes away, so a finished child never becomes a zombie.
@@ -627,9 +704,6 @@ function m.update()
         while true do
             local pkg = server.recvmsg()
             if pkg then
-                if pkg.type == 'event' and pkg.event == 'terminated' then
-                    terminated_forwarded = true
-                end
                 if
                     pkg.type == 'response'
                     and pkg.command == 'disconnect'
@@ -637,7 +711,20 @@ function m.update()
                 then
                     disconnect_acked = true
                 end
-                client.sendmsg(pkg)
+                -- Backend-internal child-spawn notification: turn it into
+                -- a `startDebugging` reverse request instead of forwarding
+                -- an unknown event to the editor.
+                if pkg.type == 'event' and pkg.event == 'moonwalkChildSpawned' then
+                    if type(pkg.body) == 'table' and type(pkg.body.address) == 'string' then
+                        request_start_debugging(pkg.body)
+                    end
+                elseif pkg.type == 'event' and pkg.event == 'terminated' then
+                    -- Single choke point: a duplicate backend `terminated`
+                    -- is dropped here instead of reaching the client twice.
+                    forward_terminated_once(pkg)
+                else
+                    client.sendmsg(pkg)
+                end
             else
                 break
             end
@@ -657,8 +744,10 @@ function m.update()
     -- detached debuggee) live on. The frontend must exit now; the debuggee
     -- is disowned (not killed, not reaped) so init reparents and reaps it.
     -- Without this, every `terminateDebuggee: false` disconnect leaks the
-    -- full adapter stack.
-    if disconnect_acked then
+    -- full adapter stack. A terminating disconnect skips this: the backend
+    -- drains and closes on its own, and `event_close` above forwards the
+    -- final messages (including `terminated`) before exiting.
+    if disconnect_acked and not disconnect_terminate then
         debuggee = nil
         if server then
             server.closeall()

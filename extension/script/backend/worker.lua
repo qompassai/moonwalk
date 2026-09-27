@@ -22,11 +22,32 @@ local fs = require('backend.worker.filesystem')
 local log = require('common.log')
 local channel = require('bee.channel')
 local disassemble = require('backend.worker.disassemble')
+local cancel = require('backend.worker.cancel')
+local completions = require('backend.worker.completions')
+local modules = require('backend.worker.modules')
+local watchpoints = require('backend.worker.watchpoints')
+local stepintargets = require('backend.worker.stepintargets')
+local childwatch = require('backend.worker.childwatch')
+local user_hooks = require('moonwalk.hooks')
 local initialized = false
 local suspend = false
 local info = {}
 local state = 'running'
 local stopReason = 'step'
+local watchHookArmed = false
+
+-- Opt-in child-process auto-attach (launch `autoAttachChildProcesses`).
+-- The child bootstrap needs moonwalk's launch.lua; the worker locates it
+-- next to itself via package.searchpath instead of trusting client args.
+local childwatchWanted = false
+local childwatchLaunchLua = (function()
+    local worker_path = package.searchpath('backend.worker', package.path)
+    local script_dir = worker_path and worker_path:match('^(.+)/backend/worker%.lua$')
+    if script_dir then
+        return script_dir .. '/launch.lua'
+    end
+    return nil
+end)()
 local currentException = {
     message = '',
     trace = '',
@@ -68,10 +89,81 @@ local function workerThreadUpdate(timeout)
     end
 end
 
+-- Arms the per-line hook that software data breakpoints need while the
+-- debuggee runs freely. Real stepping arms its own hook; this only covers
+-- state == 'running'. Idempotent via watchHookArmed.
+local function armWatchHook()
+    if watchpoints.has() and state == 'running' and not watchHookArmed then
+        hookmgr.step_over()
+        watchHookArmed = true
+    end
+end
+
 local function sendToMaster(cmd)
     return function(msg)
         masterThread:push(WorkerIdent, cmd, msg)
     end
+end
+
+-- Exit drain handshake: after the debuggee finishes, the process tears down
+-- immediately, which would kill the master thread before it drains the
+-- worker->master channel and flushes its socket. So the worker waits here
+-- (bounded) for the master's `exitAck`, which the master sends only after
+-- forwarding everything queued ahead of `exitWorker` and flushing it to
+-- the frontend. The master normally acks within one pump cycle (~10ms);
+-- the bound only bites when the master is already dead, so a dead session
+-- can never hang process exit forever. Poll counting (not os.clock) bounds
+-- the wait: os.clock measures CPU time and barely advances across sleeps.
+-- The same handshake also serves an explicit terminating `disconnect`:
+-- see CMD.disconnect.
+local EXIT_DRAIN_POLL_MAX = 500
+local EXIT_DRAIN_POLL_MS = 10
+
+-- Bounded wait for the master's `exitAck` after pushing `exitWorker`.
+-- Only the ack is consumed here: dispatching other worker commands
+-- against a closing Lua state is unsafe, so anything else is dropped.
+---@return boolean acked True when the master acknowledged the drain.
+local function wait_exit_ack()
+    local acked = false
+    local polls = 0
+    while not acked and polls < EXIT_DRAIN_POLL_MAX do
+        local ok, msg = workerThread:pop()
+        if ok and type(msg) == 'table' and msg.cmd == 'exitAck' then
+            acked = true
+        else
+            polls = polls + 1
+            thread.sleep(EXIT_DRAIN_POLL_MS)
+        end
+    end
+    return acked
+end
+
+-- Runs `fn` with cooperative cancellation armed for this request's seq.
+-- Must stay below sendToMaster: it captures the local, not a global.
+-- `fn` may throw cancel.CANCELLED; anything else is a real error.
+---@param replyCmd string Worker->master message carrying the reply.
+---@param pkg table Incoming command (command, seq).
+---@param fn function Work producing the reply body.
+local function runCancellable(replyCmd, pkg, fn)
+    cancel.begin(pkg.seq)
+    local results = table.pack(xpcall(fn, debug.traceback))
+    cancel.finish()
+    if not results[1] then
+        local err = results[2]
+        sendToMaster(replyCmd)({
+            command = pkg.command,
+            seq = pkg.seq,
+            success = false,
+            message = err == cancel.CANCELLED and 'cancelled' or tostring(err),
+        })
+        return
+    end
+    sendToMaster(replyCmd)({
+        command = pkg.command,
+        seq = pkg.seq,
+        success = true,
+        body = results[2],
+    })
 end
 
 ev.on('breakpoint', function(reason, bp)
@@ -127,12 +219,15 @@ end
 function CMD.initialized()
     initialized = true
     suspend = false
+    -- A child spawned with auto-attach marks itself claimed now that a
+    -- DAP client owns this session (see childwatch.claim).
+    childwatch.claim()
     sendToMaster('eventThread')({
         reason = 'started',
     })
 end
 
-function CMD.disconnect()
+function CMD.disconnect(pkg)
     if initialized then
         initialized = false
         state = 'running'
@@ -140,6 +235,19 @@ function CMD.disconnect()
         sendToMaster('eventThread')({
             reason = 'exited',
         })
+    end
+    if pkg.terminate then
+        -- Terminating kill: run the same exitWorker/exitAck drain
+        -- handshake natural exit uses, so in-flight output events and
+        -- fd-redirected writes reach the frontend before the master
+        -- kills the process. Unlike event.exit the worker channel is not
+        -- destroyed here: the debuggee keeps running until the master
+        -- exits the process, and popping a destroyed channel would be
+        -- use-after-free.
+        sendToMaster('exitWorker')({})
+        if not wait_exit_ack() then
+            log.warn('disconnect: exitAck bound expired; master may be gone')
+        end
     end
 end
 
@@ -351,24 +459,15 @@ function CMD.scopes(pkg)
 end
 
 function CMD.variables(pkg)
-    local vars, err = variables.extand(pkg.valueId, pkg.filter, pkg.start, pkg.count)
-    if not vars then
-        sendToMaster('variables')({
-            command = pkg.command,
-            seq = pkg.seq,
-            success = false,
-            message = err,
-        })
-        return
-    end
-    sendToMaster('variables')({
-        command = pkg.command,
-        seq = pkg.seq,
-        success = true,
-        body = {
+    runCancellable('variables', pkg, function()
+        local vars, err = variables.extand(pkg.valueId, pkg.filter, pkg.start, pkg.count)
+        if not vars then
+            error(err or 'Error variablesReference', 0)
+        end
+        return {
             variables = vars,
-        },
-    })
+        }
+    end)
 end
 
 function CMD.setVariable(pkg)
@@ -522,8 +621,10 @@ function CMD.stop(pkg)
 end
 
 function CMD.run()
+    watchHookArmed = false
     state = 'running'
     hookmgr.step_cancel()
+    armWatchHook()
 end
 
 function CMD.stepOver()
@@ -719,8 +820,74 @@ function CMD.disassemble(pkg)
     })
 end
 
+function CMD.completions(pkg)
+    runCancellable('completions', pkg, function()
+        local depth = (pkg.frameId or 0) & 0xFFFF
+        return {
+            targets = completions.complete(depth, pkg.text),
+        }
+    end)
+end
+
+function CMD.modules(pkg)
+    runCancellable('modules', pkg, function()
+        return {
+            modules = modules.list(),
+        }
+    end)
+end
+
+function CMD.cancel(pkg)
+    cancel.note(pkg.requestId)
+end
+
+function CMD.dataBreakpointInfo(pkg)
+    runCancellable('dataBreakpointInfo', pkg, function()
+        local dataId = variables.dataId(pkg.valueId, pkg.name)
+        if not dataId then
+            error(('No watchable expression for `%s`'):format(tostring(pkg.name)), 0)
+        end
+        return {
+            dataId = dataId,
+            description = dataId,
+        }
+    end)
+end
+
+function CMD.setDataBreakpoints(pkg)
+    watchpoints.set(pkg.breakpoints)
+    if not watchpoints.has() then
+        -- Last watch removed while running: drop the line hook; a real
+        -- stepping session keeps its own hook (only cancel when free).
+        if state == 'running' and watchHookArmed then
+            hookmgr.step_cancel()
+            watchHookArmed = false
+        end
+    else
+        armWatchHook()
+    end
+end
+
+function CMD.stepInTargets(pkg)
+    runCancellable('stepInTargets', pkg, function()
+        local depth = (pkg.frameId or 0) & 0xFFFF
+        return {
+            targets = stepintargets.targets(depth),
+        }
+    end)
+end
+
+function CMD.breakpointLocations(pkg)
+    runCancellable('breakpointLocations', pkg, function()
+        return {
+            breakpoints = breakpoint.locations(pkg.source, pkg.line, pkg.endLine),
+        }
+    end)
+end
+
 local function runLoop(reason, level)
     baseL = hookmgr.gethost()
+    user_hooks.emit('pause', reason)
     sendToMaster('eventStop')(reason)
     skipFrame = level or 0
     workerThreadUpdate()
@@ -742,6 +909,11 @@ local function event_breakpoint(src, line)
     local bp = breakpoint.hit_bp(src, source.line(src, line))
     if bp then
         state = 'stopped'
+        user_hooks.emit('breakpoint', {
+            source = src.path or '',
+            line = source.line(src, line),
+            id = bp.id,
+        })
         runLoop({
             reason = 'breakpoint',
             hitBreakpointIds = { bp.id },
@@ -793,6 +965,23 @@ function event.step(line, proto)
     if event_breakpoint(src, line) then
         return
     end
+    -- Software data breakpoints: re-evaluate watches on every line while
+    -- the hook is armed. Fires before the source-validity check because
+    -- watches are expression-based, not source-based.
+    if watchpoints.has() then
+        local hit = watchpoints.check()
+        if hit then
+            state = 'stopped'
+            stopReason = 'data breakpoint'
+            watchHookArmed = false
+            hookmgr.step_cancel()
+            runLoop({
+                reason = 'data breakpoint',
+                hitBreakpointIds = { hit.id },
+            })
+            return
+        end
+    end
     if not source.valid(src) then
         return
     end
@@ -824,8 +1013,23 @@ function event.newproto(proto, level)
 end
 
 function event.update()
-    debuggeeReady()
+    if debuggeeReady() then
+        -- Install child-process wrappers once the debuggee is up. On the
+        -- installing tick the worker learns the spawn-log path and tells
+        -- the master, which polls that file (the debuggee-side chunk has
+        -- no bee, so a file is the only out-of-band path).
+        local spawn_log = childwatch.ensure_installed(childwatchWanted, childwatchLaunchLua)
+        if spawn_log then
+            sendToMaster('eventChildWatchLog')({ path = spawn_log })
+        end
+    end
     workerThreadUpdate()
+    -- A watch list installed while running still needs its line hook.
+    armWatchHook()
+    -- Child-spawn reporting is file-based (see backend/master/childwatch.lua):
+    -- the debuggee-side wrappers append to the spawn log before the
+    -- blocking call, and the master polls it, because no worker code can
+    -- run while the debuggee is blocked inside os.execute.
 end
 
 function event.instbp(proto)
@@ -863,6 +1067,10 @@ function event.print(...)
     end
     local str = table.concat(res, '\t') .. '\n'
     rdebug.getinfo(1, 'Sl', info)
+    user_hooks.emit('output', {
+        category = 'stdout',
+        output = str,
+    })
     stdout(str, info)
     return true
 end
@@ -878,6 +1086,10 @@ function event.iowrite(...)
     end
     local res = table.concat(t, '\t')
     rdebug.getinfo(1, 'Sl', info)
+    user_hooks.emit('output', {
+        category = 'stdout',
+        output = res,
+    })
     stdout(res, info)
     return true
 end
@@ -1010,6 +1222,7 @@ end
 
 function event.exit()
     sendToMaster('exitWorker')({})
+    wait_exit_ack()
     channel.destroy(WorkerChannel)
 end
 
@@ -1036,6 +1249,7 @@ end
 
 ev.on('initializing', function(config)
     noDebug = config.noDebug
+    childwatchWanted = config.autoAttachChildProcesses == true
     hookmgr.update_open(not noDebug and autoUpdate)
     if hookmgr.thread_open then
         hookmgr.thread_open(true)
@@ -1051,6 +1265,8 @@ end)
 
 ev.on('terminated', function()
     hookmgr.step_cancel()
+    watchpoints.clear()
+    user_hooks.emit('terminate', {})
     if outputCapture['print'] then
         stdio.open_print(false)
     end

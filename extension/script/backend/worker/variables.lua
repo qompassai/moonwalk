@@ -11,6 +11,8 @@ local serialize = require('backend.worker.serialize')
 local ev = require('backend.event')
 local base64 = require('common.base64')
 local eval = require('backend.worker.eval')
+local cancel = require('backend.worker.cancel')
+local formatters = require('moonwalk.formatters')
 
 local SHORT_TABLE_ARRAY <const> = 15
 local SHORT_TABLE_HASH <const> = 100
@@ -251,8 +253,131 @@ local escape_char = {
     ['\\' .. string.byte('"')] = '\\' .. '"',
 }
 
+-- Bytes shown as hex in the <binary> preview; the preview itself stays short.
+local BINARY_PREVIEW_BYTES = 16
+
+---True when `s` is valid UTF-8 (plain ASCII included). `%q` only escapes
+---C0 controls, so any other non-UTF-8 byte would reach the DAP client raw
+---and corrupt the JSON frame (invalid UTF-8 kills the client's reader, and
+---every later request then looks like a worker hang).
+---@param s string
+---@return boolean
+local function is_valid_utf8(s)
+    local i, n = 1, #s
+    while i <= n do
+        local c = s:byte(i)
+        local width
+        if c < 0x80 then
+            width = 1
+        elseif c < 0xC2 then
+            return false -- 0x80..0xC1: stray continuation or overlong lead
+        elseif c < 0xE0 then
+            width = 2
+        elseif c < 0xF0 then
+            width = 3
+        elseif c < 0xF5 then
+            width = 4
+        else
+            return false -- 0xF5..0xFF: never valid in UTF-8
+        end
+        if i + width - 1 > n then
+            return false
+        end
+        for j = 1, width - 1 do
+            local d = s:byte(i + j)
+            if d < 0x80 or d > 0xBF then
+                return false
+            end
+        end
+        if width == 3 then
+            local d = s:byte(i + 1)
+            if (c == 0xE0 and d < 0xA0) or (c == 0xED and d > 0x9F) then
+                return false -- overlong encoding or UTF-16 surrogate
+            end
+        elseif width == 4 then
+            local d = s:byte(i + 1)
+            if (c == 0xF0 and d < 0x90) or (c == 0xF4 and d > 0x8F) then
+                return false -- overlong encoding or beyond U+10FFFF
+            end
+        end
+        i = i + width
+    end
+    return true
+end
+
+---Short, always frame-safe rendering of binary (non-UTF-8) data, e.g.
+---`<binary, 45 bytes: 89 50 4E 47 0D 0A 1A 0A ...>`.
+---@param s string
+---@return string
+local function binary_preview(s)
+    local parts = {}
+    local n = math.min(#s, BINARY_PREVIEW_BYTES)
+    for i = 1, n do
+        parts[i] = ('%02X'):format(s:byte(i))
+    end
+    local preview = table.concat(parts, ' ')
+    if #s > BINARY_PREVIEW_BYTES then
+        preview = preview .. ' ...'
+    end
+    return ('<binary, %d bytes: %s>'):format(#s, preview)
+end
+
+---Quote `s` for embedding in DAP text. Binary (non-UTF-8) input cannot be
+---quoted: `%q` leaves bytes >= 0x80 raw, which would corrupt the DAP JSON
+---frame; it renders as a binary preview instead.
+---@param s string
+---@return string
 local function quotedString(s)
+    if not is_valid_utf8(s) then
+        return binary_preview(s)
+    end
     return ('%q'):format(s):sub(2, -2):gsub('\\[1-9][0-9]?', escape_char):gsub('\\\n', '\\n')
+end
+
+---Truncate valid UTF-8 `s` to at most `maxlen` bytes without splitting a
+---character, so a byte cut never misclassifies text as binary downstream.
+---@param s string Valid UTF-8.
+---@param maxlen integer
+---@return string
+local function utf8_truncate(s, maxlen)
+    if #s <= maxlen then
+        return s
+    end
+    local cut = maxlen
+    while cut > 0 do
+        local b = s:byte(cut)
+        if b < 0x80 or b >= 0xC0 then
+            break
+        end
+        cut = cut - 1
+    end
+    if cut == 0 then
+        return ''
+    end
+    local b = s:byte(cut)
+    local width = b < 0x80 and 1 or (b < 0xE0 and 2 or (b < 0xF0 and 3 or 4))
+    if cut + width - 1 <= maxlen then
+        cut = cut + width - 1 -- the whole character fits; keep it
+    else
+        cut = cut - 1 -- drop the partial character
+    end
+    return s:sub(1, cut)
+end
+
+---Render a string variable value: single-quoted, capped at `maxlen` bytes
+---with a `...` suffix when truncated. Binary data renders as
+---`<binary, N bytes: ...>` and is never quoted.
+---@param value string Raw string value.
+---@param maxlen integer Cap for quoted text, in bytes.
+---@return string
+local function render_string_capped(value, maxlen)
+    if not is_valid_utf8(value) then
+        return binary_preview(value)
+    end
+    if #value <= maxlen then
+        return ("'%s'"):format(quotedString(value))
+    end
+    return ("'%s...'"):format(quotedString(utf8_truncate(value, maxlen)))
 end
 
 local function varCanExtand(type, value)
@@ -298,10 +423,13 @@ local function varGetShortName(v)
     end
     if type == 'string' then
         ---@cast value string
-        if #value < 32 then
-            return value
+        if not is_valid_utf8(value) then
+            return binary_preview(value)
         end
-        return quotedString(value:sub(1, 32)) .. '...'
+        if #value < 32 then
+            return quotedString(value)
+        end
+        return quotedString(utf8_truncate(value, 32)) .. '...'
     elseif type == 'boolean' then
         if value then
             return 'true'
@@ -367,10 +495,7 @@ local function varGetShortValue(v)
     local type, value = rdebug.value(v)
     if type == 'string' then
         ---@cast value string
-        if #value < 16 then
-            return ("'%s'"):format(quotedString(value))
-        end
-        return ("'%s...'"):format(quotedString(value:sub(1, 16)))
+        return render_string_capped(value, 16)
     elseif type == 'boolean' then
         if value then
             return 'true'
@@ -532,21 +657,23 @@ end
 -- context: variables,hover,watch,repl,clipboard
 local function varGetValue(context, allow_lazy, v)
     local type, value = rdebug.value(v)
+    -- User formatters (moonwalk/formatters.lua) get first refusal; the
+    -- builtin rendering below is unchanged when nothing matches.
+    local custom = formatters.format(value, type, context)
+    if custom then
+        return custom, type
+    end
     if type == 'string' then
         ---@cast value string
         if context == 'repl' or context == 'clipboard' then
-            return ("'%s'"):format(value), 'string'
-        end
-        if context == 'hover' then
-            if #value < 2048 then
-                return ("'%s'"):format(value), 'string'
-            end
-            return ("'%s...'"):format(value:sub(1, 2048)), 'string'
-        end
-        if #value < 1024 then
+            -- quotedString renders binary safely; the full text is kept
+            -- for repl/clipboard as before.
             return ("'%s'"):format(quotedString(value)), 'string'
         end
-        return ("'%s...'"):format(quotedString(value:sub(1, 1024))), 'string'
+        if context == 'hover' then
+            return render_string_capped(value, 2048), 'string'
+        end
+        return render_string_capped(value, 1024), 'string'
     elseif type == 'boolean' then
         if value then
             return 'true', 'boolean'
@@ -683,9 +810,17 @@ local function varCreate(t)
     local vars = t.vars
     local name = t.name
     local extand = t.varRef.extand
-    if extand[name] then
-        local index = extand[name].index
-        local nameidx = extand[name].nameidx
+    -- Each extandValue/extandTable* pass bumps varRef.extandGen, so an entry
+    -- whose generation matches the current pass is a genuine duplicate
+    -- inside one expansion (e.g. shadowed locals); an older generation
+    -- means this is a re-expansion (variables, then dataBreakpointInfo) and
+    -- the cached entry must be overwritten, not renamed with evaluateName
+    -- nilled.
+    local gen = t.varRef.extandGen or 0
+    local prev = extand[name]
+    if prev and prev.gen == gen then
+        local index = prev.index
+        local nameidx = prev.nameidx
         local var = vars[index]
         if not nameidx or (var.presentationHint and var.presentationHint.kind == 'virtual') then
             local log = require('common.log')
@@ -703,7 +838,7 @@ local function varCreate(t)
             kind = 'virtual',
         }
         var.evaluateName = nil
-        extand[newname] = extand[name]
+        extand[newname] = prev
         extand[newname].evaluateName = nil
         extand[name] = nil
     end
@@ -721,6 +856,7 @@ local function varCreate(t)
         index = #vars,
         nameidx = t.nameidx,
         memoryReference = var.memoryReference,
+        gen = gen,
     }
 end
 
@@ -756,6 +892,9 @@ end
 
 local function extandTableIndexed(varRef, start, count)
     varRef.extand = varRef.extand or {}
+    -- New expansion pass: varCreate uses this to tell re-expansion apart
+    -- from genuine same-name duplicates within one pass.
+    varRef.extandGen = (varRef.extandGen or 0) + 1
     local t = varRef.v
     local evaluateName = varRef.eval
     local vars = {}
@@ -768,6 +907,9 @@ local function extandTableIndexed(varRef, start, count)
     end
     local loct = rdebug.tablearray(t, start - arrayBase, last - arrayBase)
     for i = 1, #loct, 2 do
+        if (i % 128) == 1 then
+            cancel.check()
+        end
         local key = start + i // 2
         local value, valueref = loct[i], loct[i + 1]
         if value ~= nil then
@@ -794,6 +936,9 @@ local function extandTableNamed(varRef)
     local vars = {}
     local loct = rdebug.tablehash(t, 0, MAX_TABLE_HASH)
     for i = 1, #loct, 3 do
+        if (i % 192) == 1 then
+            cancel.check()
+        end
         local key, value, valueref = loct[i], loct[i + 1], loct[i + 2]
         local key_type = rdebug.type(key)
         if varCanExtand(key_type, key) then
@@ -1338,6 +1483,11 @@ local function extandValue(varRef, filter, start, count)
         local var = varCreateReference(varRef.v, varRef.eval, {}, varRef.context, false)
         return { var }
     end
+    -- New expansion pass: varCreate tells re-expansion apart from genuine
+    -- same-name duplicates within one pass via this generation. (Table
+    -- indexed expansion bumps again inside extandTableIndexed; the inner
+    -- bump still yields one consistent generation for that pass.)
+    varRef.extandGen = (varRef.extandGen or 0) + 1
     if varRef.special then
         return special_extand[varRef.special](varRef, filter, start, count)
     end
@@ -1416,6 +1566,38 @@ function m.extand(valueId, filter, start, count)
         return nil, 'Error variablesReference'
     end
     return extandValue(varRef, filter, start, count)
+end
+
+-- Upper bound for the indexed scan in dataId; named lookup is tried first.
+local DATAID_INDEXED_SCAN_MAX = 64
+
+---@param valueId integer Worker-local variablesReference.
+---@param name string Variable name as shown in the variables pane.
+---@return string? dataId Evaluate expression watching this variable, or nil.
+function m.dataId(valueId, name)
+    local varRef = varPool[valueId]
+    if not varRef then
+        return nil
+    end
+    local vars = extandValue(varRef)
+    if vars then
+        for _, var in ipairs(vars) do
+            if var.name == name and type(var.evaluateName) == 'string' then
+                return var.evaluateName
+            end
+        end
+    end
+    -- Array-like tables only expose indexed children on demand; scan a
+    -- bounded prefix so `arr` + `[001]` still resolves.
+    if rdebug.type(varRef.v) == 'table' then
+        local indexed = extandTableIndexed(varRef, 0, DATAID_INDEXED_SCAN_MAX)
+        for _, var in ipairs(indexed) do
+            if var.name == name and type(var.evaluateName) == 'string' then
+                return var.evaluateName
+            end
+        end
+    end
+    return nil
 end
 
 function m.set(valueId, name, value)

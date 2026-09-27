@@ -23,6 +23,14 @@ local waitinstbp = {} -- {[funcId] = {[pc] = bp}}
 local m = {}
 local enable = false
 
+-- Stack depth of the debuggee frame where a breakpoint fired, in the
+-- lua_getstack numbering used by eval.eval's level parameter (0 addresses
+-- the frame on top of the host stack). The hook invoking the hit path is a
+-- C hook, which adds no Lua frame (ldo.c luaD_hook calls it directly), and
+-- visitor.eval pcall's the eval chunk straight onto the host thread, so the
+-- hit frame is at depth 0; the eval chunk itself adds 2 internally.
+local HIT_FRAME_LEVEL = 0
+
 local function updateHook()
     local hasInstBp = next(instbreakpoints) ~= nil or next(waitinstbp) ~= nil
     if enable then
@@ -313,16 +321,18 @@ function m.set_bp(clientsrc, breakpoints, content)
     end
 end
 
+---@param bp table Breakpoint record being tested.
+---@return boolean stop True when the debugger should stop at this breakpoint.
 function m.exec(bp)
     if bp.condition then
-        local ok, res = eval.eval(bp.condition)
+        local ok, res = eval.eval(bp.condition, HIT_FRAME_LEVEL)
         if not ok or not res then
             return false
         end
     end
     bp.statHit = bp.statHit + 1
     if bp.hitCondition then
-        local ok, res = eval.eval(bp.statHit .. ' ' .. bp.hitCondition)
+        local ok, res = eval.eval(bp.statHit .. ' ' .. bp.hitCondition, HIT_FRAME_LEVEL)
         if not ok or res ~= true then
             return false
         end
@@ -333,7 +343,7 @@ function m.exec(bp)
             if not logEntry then
                 return key
             end
-            local ok, res = eval.eval(logEntry)
+            local ok, res = eval.eval(logEntry, HIT_FRAME_LEVEL)
             if not ok then
                 return '{' .. logEntry .. '}'
             end
@@ -544,6 +554,77 @@ end
 
 function m.get_proto(funcId)
     return protosById[funcId]
+end
+
+-- Bound for the line-range scan in locations; the client normally asks
+-- for a screenful.
+local LOCATIONS_RANGE_MAX = 10000
+
+---@param clientsrc table DAP source (path or sourceReference).
+---@return string? content Chunk text, or nil when it cannot be recovered.
+local function locations_content(clientsrc)
+    if type(clientsrc) ~= 'table' then
+        return nil
+    end
+    if clientsrc.sourceReference then
+        -- Worker-local refs are tagged (w << 32); the master forwarded the
+        -- global form, so strip the tag back to the pool key.
+        local ref = clientsrc.sourceReference & 0xFFFFFFFF
+        return source.getCode(ref)
+    end
+    if type(clientsrc.path) ~= 'string' then
+        return nil
+    end
+    local f = io.open(clientsrc.path, 'r')
+    if not f then
+        return nil
+    end
+    local content = f:read('a')
+    f:close()
+    return content
+end
+
+---DAP `breakpointLocations`: executable positions in [line, endLine].
+-- Moonwalk is line-oriented, so every executable line yields one location
+-- at column 1; the parser's snap map identifies executable lines.
+---@param clientsrc table DAP source.
+---@param line integer 1-based start line.
+---@param endLine integer? 1-based end line (defaults to line).
+---@return table locations DAP BreakpointLocation list.
+function m.locations(clientsrc, line, endLine)
+    local locations = {}
+    if type(line) ~= 'number' or line < 1 then
+        return locations
+    end
+    local last = type(endLine) == 'number' and endLine or line
+    if last < line then
+        return locations
+    end
+    last = math.min(last, line + LOCATIONS_RANGE_MAX)
+    local content = locations_content(clientsrc)
+    if type(content) ~= 'string' or content == '' then
+        return locations
+    end
+    -- parser() logs and returns nil when the chunk does not compile.
+    local lineinfo = parser(content)
+    if type(lineinfo) ~= 'table' then
+        return locations
+    end
+    -- lineinfo[i] is where a breakpoint on line i would bind (cf.
+    -- verifyBreakpointByLineInfo); nil means i cannot take a breakpoint.
+    -- Deduplicate: several requested lines can snap to one bindable line.
+    local seen = {}
+    for i = line, last do
+        local bind = lineinfo[i]
+        if bind ~= nil and not seen[bind] then
+            seen[bind] = true
+            locations[#locations + 1] = {
+                line = bind,
+                column = 1,
+            }
+        end
+    end
+    return locations
 end
 
 ev.on('terminated', function()

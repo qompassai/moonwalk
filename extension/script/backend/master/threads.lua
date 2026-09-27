@@ -7,11 +7,19 @@
 local mgr = require('backend.master.mgr')
 local event = require('backend.master.event')
 local response = require('backend.master.response')
+local childwatch = require('backend.master.childwatch')
 
 local CMD = {}
 
 function CMD.initWorker(WorkerIdent)
     mgr.initWorker(WorkerIdent)
+end
+
+function CMD.eventChildWatchLog(_, req)
+    -- A worker opted into child auto-attach and installed the debuggee
+    -- wrappers: register its spawn-log path for the per-tick poll. The
+    -- worker announces it; the master never guesses.
+    childwatch.set_log(req.path)
 end
 
 function CMD.exitWorker(w)
@@ -199,6 +207,46 @@ end
 
 function CMD.setThreadName(w, name)
     mgr.setThreadName(w, name)
+end
+
+function CMD.completions(_, req)
+    if not req.success then
+        response.error(req, req.message)
+        return
+    end
+    response.success(req, req.body)
+end
+
+function CMD.modules(_, req)
+    if not req.success then
+        response.error(req, req.message)
+        return
+    end
+    response.success(req, req.body)
+end
+
+function CMD.dataBreakpointInfo(_, req)
+    if not req.success then
+        response.error(req, req.message)
+        return
+    end
+    response.success(req, req.body)
+end
+
+function CMD.stepInTargets(_, req)
+    if not req.success then
+        response.error(req, req.message)
+        return
+    end
+    response.success(req, req.body)
+end
+
+function CMD.breakpointLocations(_, req)
+    if not req.success then
+        response.error(req, req.message)
+        return
+    end
+    response.success(req, req.body)
 end
 
 return CMD

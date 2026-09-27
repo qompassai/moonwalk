@@ -11,11 +11,11 @@ local event = require('backend.master.event')
 local ev = require('backend.event')
 local utility = require('luadebug.utility')
 local resolve_config = require('backend.master.resolve_config')
+local childwatch = require('backend.master.childwatch')
 
 local request = {}
 
 local firstWorker = true
-local closeProcess = false
 local state = 'none'
 local config = {
     initialize = {},
@@ -411,9 +411,20 @@ function request.disconnect(req)
     if args.terminateDebuggee == nil then
         args.terminateDebuggee = not not config.launch
     end
-    mgr.workerBroadcast({
-        cmd = 'disconnect',
-    })
+    if args.terminateDebuggee and not args.suspendDebuggee then
+        -- Terminating kill: route workers through the same bounded
+        -- exitWorker/exitAck drain handshake natural exit uses, so
+        -- in-flight output events reach the frontend before the process
+        -- dies. A plain `disconnect` detaches the workers instead.
+        mgr.workerBroadcast({
+            cmd = 'disconnect',
+            terminate = true,
+        })
+    else
+        mgr.workerBroadcast({
+            cmd = 'disconnect',
+        })
+    end
     if args.suspendDebuggee then
         mgr.workerBroadcast({
             cmd = 'suspend',
@@ -423,13 +434,16 @@ function request.disconnect(req)
         -- buffered, and os.exit() would discard it, leaving the client
         -- hanging on a disconnect that will never be answered.
         mgr.flushClient()
-        if closeProcess then
-            mgr.setTerminateDebuggeeCallback(function()
-                os.exit(true, true)
-            end)
-        else
-            os.exit(true, true)
-        end
+        -- Reap unattached children BEFORE os.exit: exiting here bypasses
+        -- mgr.update()'s end-of-loop cleanup, which would orphan a child
+        -- stuck at its debugger wait gate.
+        childwatch.cleanup()
+        -- Bounded drain, then exit: pumps worker traffic until every
+        -- worker completes the exit handshake (fd redirect drained,
+        -- socket flushed, `terminated` emitted) instead of os.exit()ing
+        -- over in-flight events. A wedged debuggee only costs the drain
+        -- bound; the process exits anyway.
+        mgr.terminate_drain_and_exit()
     end
     return true
 end
@@ -447,8 +461,10 @@ function request.terminate(req)
     mgr.workerBroadcast({
         cmd = 'disconnect',
     })
+    -- The terminate callback kills this process, bypassing mgr.update()'s
+    -- end-of-loop cleanup: reap unattached children up front.
+    childwatch.cleanup()
     mgr.setTerminateDebuggeeCallback(function()
-        closeProcess = true
         utility.closeprocess()
     end)
     return true
@@ -464,6 +480,9 @@ function request.restart(req)
         if args then
             config.initialize = args
         end
+        -- The old session's unattached children can never proceed past
+        -- their wait gate; reap them before the new session starts.
+        childwatch.cleanup()
         for w in pairs(mgr.workers()) do
             initializeWorker(w)
         end
@@ -729,6 +748,206 @@ function request.customRequestShowIntegerAsHex(req)
     response.success(req)
     mgr.workerBroadcast({
         cmd = 'customRequestShowIntegerAsHex',
+    })
+end
+
+-- Lowest-numbered live worker, for requests that are not addressed to a
+-- specific thread (modules, breakpointLocations). Deterministic; in a
+-- multi-debuggee session this reports the first debuggee -- documented,
+-- not silent.
+---@return integer? threadId
+local function firstThreadId()
+    local best
+    for threadId in pairs(mgr.workers()) do
+        if best == nil or threadId < best then
+            best = threadId
+        end
+    end
+    return best
+end
+
+function request.completions(req)
+    local args = req.arguments or {}
+    local threadId, frameId
+    if type(args.frameId) == 'number' then
+        threadId = args.frameId >> 24
+        frameId = args.frameId & 0x00FFFFFF
+    else
+        threadId = firstThreadId()
+        frameId = 0
+    end
+    if not checkThreadId(req, threadId) then
+        return
+    end
+    if type(args.text) ~= 'string' then
+        response.error(req, 'No completion text')
+        return
+    end
+    mgr.workerSend(threadId, {
+        cmd = 'completions',
+        command = req.command,
+        seq = req.seq,
+        frameId = frameId,
+        text = args.text,
+    })
+end
+
+function request.modules(req)
+    local threadId = firstThreadId()
+    if not checkThreadId(req, threadId) then
+        return
+    end
+    mgr.workerSend(threadId, {
+        cmd = 'modules',
+        command = req.command,
+        seq = req.seq,
+    })
+end
+
+function request.cancel(req)
+    local args = req.arguments or {}
+    -- DAP cancel carries requestId (the seq to abort) and/or progressId.
+    -- Progress reporting is not implemented, so progressId is acknowledged
+    -- and ignored.
+    if type(args.requestId) == 'number' then
+        mgr.workerBroadcast({
+            cmd = 'cancel',
+            requestId = args.requestId,
+        })
+    end
+    response.success(req)
+end
+
+function request.dataBreakpointInfo(req)
+    local args = req.arguments or {}
+    if type(args.variablesReference) ~= 'number' then
+        response.error(req, 'No variablesReference')
+        return
+    end
+    if type(args.name) ~= 'string' then
+        response.error(req, 'No variable name')
+        return
+    end
+    local threadId = args.variablesReference >> 24
+    local valueId = args.variablesReference & 0x00FFFFFF
+    if not checkThreadId(req, threadId) then
+        return
+    end
+    mgr.workerSend(threadId, {
+        cmd = 'dataBreakpointInfo',
+        command = req.command,
+        seq = req.seq,
+        valueId = valueId,
+        name = args.name,
+    })
+end
+
+-- Hard cap: software watchpoints re-evaluate every expression on each
+-- line event, so the list must stay small.
+local DATA_BREAKPOINT_MAX = 16
+
+function request.setDataBreakpoints(req)
+    local args = req.arguments or {}
+    -- `wire` goes to the workers (only dataId is honored); `answered` is
+    -- the DAP Breakpoint list. Conditional data breakpoints fail
+    -- verification loudly instead of arming a watch that ignores them.
+    -- accessType `write` is accepted because a detected value change IS
+    -- a write; `read` is rejected loudly because software polling
+    -- cannot observe reads (a read never changes the watched value).
+    local wire = {}
+    local answered = {}
+    if type(args.breakpoints) == 'table' then
+        for i = 1, math.min(#args.breakpoints, DATA_BREAKPOINT_MAX) do
+            local bp = args.breakpoints[i]
+            if type(bp) == 'table' then
+                local verified = type(bp.dataId) == 'string' and bp.dataId ~= ''
+                local message
+                if not verified then
+                    message = 'Data breakpoint needs a dataId.'
+                elseif bp.condition ~= nil or bp.hitCondition ~= nil then
+                    verified = false
+                    message = 'Conditional data breakpoints are not supported.'
+                elseif bp.accessType ~= nil
+                    and bp.accessType ~= 'readWrite'
+                    and bp.accessType ~= 'write' then
+                    verified = false
+                    if bp.accessType == 'read' then
+                        -- WHY: watchpoints are software polling. The worker
+                        -- re-evaluates the expression on line events and
+                        -- fires only when the rendered value CHANGES -- and
+                        -- a change is inherently a write. A read never
+                        -- alters the value, so polling cannot ever observe
+                        -- one. Silently downgrading read->write would arm a
+                        -- watch that fires on behavior the user did not ask
+                        -- to trap, so read fails loudly and stays failed.
+                        message = 'accessType `read` is not supported: '
+                            .. 'software watchpoints poll for value changes '
+                            .. 'and cannot observe reads.'
+                    else
+                        message = ('accessType `%s` is not supported.'):format(
+                            tostring(bp.accessType)
+                        )
+                    end
+                end
+                if verified then
+                    wire[#wire + 1] = { dataId = bp.dataId }
+                end
+                answered[#answered + 1] = {
+                    verified = verified,
+                    message = message,
+                }
+            end
+        end
+    end
+    response.success(req, {
+        breakpoints = answered,
+    })
+    mgr.workerBroadcast({
+        cmd = 'setDataBreakpoints',
+        breakpoints = wire,
+    })
+end
+
+function request.stepInTargets(req)
+    local args = req.arguments or {}
+    if type(args.frameId) ~= 'number' then
+        response.error(req, 'No frameId')
+        return
+    end
+    local threadId = args.frameId >> 24
+    local frameId = args.frameId & 0x00FFFFFF
+    if not checkThreadId(req, threadId) then
+        return
+    end
+    mgr.workerSend(threadId, {
+        cmd = 'stepInTargets',
+        command = req.command,
+        seq = req.seq,
+        frameId = frameId,
+    })
+end
+
+function request.breakpointLocations(req)
+    local args = req.arguments or {}
+    if type(args.source) ~= 'table' then
+        response.error(req, 'No source')
+        return
+    end
+    if type(args.line) ~= 'number' then
+        response.error(req, 'No line')
+        return
+    end
+    local threadId = firstThreadId()
+    if not checkThreadId(req, threadId) then
+        return
+    end
+    mgr.workerSend(threadId, {
+        cmd = 'breakpointLocations',
+        command = req.command,
+        seq = req.seq,
+        source = args.source,
+        line = args.line,
+        endLine = args.endLine,
     })
 end
 

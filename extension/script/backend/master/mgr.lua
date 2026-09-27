@@ -8,6 +8,7 @@ local ev = require('backend.event')
 local thread = require('bee.thread')
 local stdio = require('luadebug.stdio')
 local channel = require('bee.channel')
+local log = require('common.log')
 
 local redirect = {}
 local mgr = {}
@@ -23,6 +24,25 @@ local threadStatus = {}
 local threadName = {}
 local terminateDebuggeeCallback
 local quit = false
+
+-- Forward declaration: defined further below, but mgr.exitWorker (above it
+-- in the file) needs it for the last-worker drain. Without this the name
+-- would resolve to a nil global inside exitWorker.
+local update_redirect
+
+-- True once `terminated` has been emitted for this session. The exit
+-- handshake in mgr.exitWorker emits it before releasing the worker; the
+-- update-loop tail emits it on every other shutdown path. The guard keeps
+-- the two from doubling it.
+local terminated_sent = false
+
+local function sendTerminatedOnce()
+    if terminated_sent then
+        return
+    end
+    terminated_sent = true
+    require('backend.master.event').terminated()
+end
 
 mgr.keepSessionAlive = false
 
@@ -45,6 +65,7 @@ local function event_close()
     ev.emit('close')
     initialized = false
     seq = 0
+    terminated_sent = false
 end
 
 function mgr.newSeq()
@@ -57,6 +78,10 @@ function mgr.init(io)
     --socket.debug(true)
     masterThread = assert(channel.query('DbgMaster'))
     socket.event_close(event_close)
+    -- Child-process auto-attach: the master owns the spawn-log poll
+    -- (see backend/master/childwatch.lua); per-session state is reset
+    -- here, before any worker can announce a log.
+    require('backend.master.childwatch').init()
     return true
 end
 
@@ -206,6 +231,7 @@ function mgr.checkTerminateTimeout()
 end
 
 function mgr.exitWorker(w)
+    local workerChannel = threadChannel[w]
     threadChannel[w] = nil
     for WorkerIdent, threadId in pairs(threadCatalog) do
         if threadId == w then
@@ -214,12 +240,29 @@ function mgr.exitWorker(w)
     end
     threadStatus[w] = nil
     threadName[w] = nil
-    if not mgr.keepSessionAlive and next(threadChannel) == nil then
+    local last = next(threadChannel) == nil
+    if last then
+        -- Last worker: drain the fd-level output redirect too, so raw
+        -- writes made just before exit are not lost either.
+        update_redirect()
+    end
+    -- The exiting worker is blocked in event.exit waiting for `exitAck`.
+    -- Everything it queued ahead of `exitWorker` was popped (FIFO) and
+    -- forwarded, so flush the socket first: the ack then truly means the
+    -- frontend has everything, and process exit can no longer lose
+    -- trailing events in the termination race.
+    mgr.flushClient()
+    if workerChannel then
+        workerChannel:push({ cmd = 'exitAck' })
+    end
+    if last and not mgr.keepSessionAlive then
+        sendTerminatedOnce()
+        mgr.flushClient()
         quit = true
     end
 end
 
-local function update_redirect()
+function update_redirect()
     if redirect.stderr then
         local res = redirect.stderr:read(redirect.stderr:peek())
         if res then
@@ -242,6 +285,27 @@ local function update_redirect()
     end
 end
 
+-- Pop and dispatch pending worker->master messages. Shared by the main
+-- update loop and the terminating-disconnect drain: both must forward
+-- in-flight worker traffic (output events especially) before the process
+-- goes away. Each call dispatches at most WORKER_MESSAGE_BATCH_MAX, so a
+-- flooding worker cannot starve the socket pump below; backlogs drain
+-- across repeated calls.
+local WORKER_MESSAGE_BATCH_MAX = 256
+
+local function pump_worker_messages()
+    local threadCMD = require('backend.master.threads')
+    for _ = 1, WORKER_MESSAGE_BATCH_MAX do
+        local ok, w, cmd, msg = masterThread:pop()
+        if not ok then
+            break
+        end
+        if threadCMD[cmd] then
+            threadCMD[cmd](threadCatalog[w] or w, msg)
+        end
+    end
+end
+
 local function update_once()
     -- If terminate was requested but workers are stuck (stopped at
     -- breakpoints, never processing disconnect), force shutdown after
@@ -256,16 +320,11 @@ local function update_once()
         quit = true
         return false
     end
-    local threadCMD = require('backend.master.threads')
-    while true do
-        local ok, w, cmd, msg = masterThread:pop()
-        if not ok then
-            break
-        end
-        if threadCMD[cmd] then
-            threadCMD[cmd](threadCatalog[w] or w, msg)
-        end
-    end
+    pump_worker_messages()
+    -- Out-of-band child-spawn reports: the debuggee thread may be blocked
+    -- inside os.execute, so these never travel the worker path. The master
+    -- thread is the only context that stays live during the block.
+    require('backend.master.childwatch').poll()
     update_redirect()
     socket.update(0)
     local req = socket.recvmsg()
@@ -304,14 +363,70 @@ function mgr.update()
             thread.sleep(10)
         end
     end
-    local event = require('backend.master.event')
-    event.terminated()
+    -- Reap spawned Lua children nobody attached to: a child still waiting
+    -- at its debugger wait gate can never proceed once this session is
+    -- gone, so leaving it would orphan it forever. Claimed children
+    -- (attached sessions) are owned elsewhere and are left alone.
+    require('backend.master.childwatch').cleanup()
+    -- The exit handshake may already have emitted `terminated` (and
+    -- flushed it) before releasing the last worker; every other shutdown
+    -- path lands here with it still unsent.
+    sendTerminatedOnce()
     -- Flush before close: output events queued behind `terminated` must
     -- reach the frontend, otherwise final program output is silently lost
     -- in the termination race.
     mgr.flushClient()
     socket.closeall()
     channel.destroy('DbgMaster')
+end
+
+-- Bound for the terminating-disconnect drain: the master keeps pumping
+-- worker traffic until every worker completes the exitWorker/exitAck
+-- handshake or the bound expires. Poll-counted, not os.clock: os.clock
+-- measures CPU time and barely advances across thread.sleep. Matches the
+-- worker's EXIT_DRAIN bound so a worker wedged in native code delays
+-- disconnect by at most ~5s before the process exits anyway.
+local TERMINATE_DRAIN_POLL_MAX = 500
+local TERMINATE_DRAIN_POLL_MS = 10
+
+---Run the bounded exit drain for a terminating disconnect, then exit the
+---process. Reuses the natural-exit handshake: each worker pushes
+---`exitWorker` and waits for `exitAck`; mgr.exitWorker drains the fd
+---redirect, flushes the socket, acks, and emits `terminated`. A worker
+---wedged in native code never answers, so the bound expires and the
+---process exits anyway (logged). Never returns.
+function mgr.terminate_drain_and_exit()
+    -- A stale terminate callback (e.g. from request.terminate) must not
+    -- fire mid-drain and os.exit() ahead of the handshake.
+    terminateDebuggeeCallback = nil
+    terminate_requested_at = nil
+    local polls = 0
+    while next(threadChannel) ~= nil and polls < TERMINATE_DRAIN_POLL_MAX do
+        pump_worker_messages()
+        -- Drain fd-level output written just before the kill, then push
+        -- everything buffered toward the frontend.
+        update_redirect()
+        socket.update(0)
+        polls = polls + 1
+        thread.sleep(TERMINATE_DRAIN_POLL_MS)
+    end
+    if next(threadChannel) ~= nil then
+        log.warn(
+            'disconnect: exit-drain bound expired with workers still '
+                .. 'attached; exiting anyway'
+        )
+    else
+        log.info('disconnect: exit drain complete; exiting')
+    end
+    -- Deterministic terminal ordering even on expiry: push any last
+    -- worker messages and fd output, emit `terminated` exactly once
+    -- (guarded; the natural handshake path may have sent it already),
+    -- and flush before the process goes away.
+    pump_worker_messages()
+    update_redirect()
+    sendTerminatedOnce()
+    mgr.flushClient()
+    os.exit(true, true)
 end
 
 function mgr.setClient(c)

@@ -195,15 +195,27 @@ end
 ---@return any ... The wrapper's return values.
 local function call_with_budget(func, vargs)
     local prev_hook, prev_mask, prev_count = debug.gethook()
-    budget_remaining = EVAL_STEP_MAX
-    budget_active = true
-    debug.sethook(budget_hook, '', EVAL_HOOK_EVERY)
+    -- While a breakpoint condition, hit condition, logpoint, or watch is
+    -- evaluated, the debugger's own native hook is installed; debug.gethook
+    -- then reports the string "external hook", which debug.sethook cannot
+    -- reinstall -- and replacing it would clobber the debugger. Run the
+    -- expression with hooks untouched in that case. The step budget cannot
+    -- fire there anyway: the evaluator invokes this chunk with
+    -- allowhook == 0, so a count hook would never trigger.
+    local budgeted = type(prev_hook) == 'function' or prev_hook == nil
+    if budgeted then
+        budget_remaining = EVAL_STEP_MAX
+        budget_active = true
+        debug.sethook(budget_hook, '', EVAL_HOOK_EVERY)
+    end
     local results = table.pack(pcall(func, _unpack(vargs)))
-    budget_active = false
-    if prev_hook then
-        debug.sethook(prev_hook, prev_mask, prev_count)
-    else
-        debug.sethook()
+    if budgeted then
+        budget_active = false
+        if prev_hook then
+            debug.sethook(prev_hook, prev_mask, prev_count)
+        else
+            debug.sethook()
+        end
     end
     if not results[1] then
         error(results[2], 0)

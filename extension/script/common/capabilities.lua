@@ -29,6 +29,12 @@ return {
     supportsDisassembleRequest = true,
     supportsInstructionBreakpoints = true,
     supportsClipboardContext = true,
+    supportsCompletionsRequest = true,
+    supportsModulesRequest = true,
+    supportsCancelRequest = true,
+    supportsDataBreakpoints = true,
+    supportsStepInTargetsRequest = true,
+    supportsBreakpointLocationsRequest = true,
     supportsExceptionFilterOptions = true,
     supportsANSIStyling = true,
     exceptionBreakpointFilters = {
