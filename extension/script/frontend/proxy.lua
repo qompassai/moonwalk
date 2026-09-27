@@ -31,6 +31,12 @@ local debuggee = nil
 local REAP_TIMEOUT_MS = 2000
 local REAP_POLL_MS = 50
 
+-- Signal numbers for the reap escalation ladder.
+local SIGTERM = 15
+local SIGKILL = 9
+-- How long to wait after SIGTERM before escalating to SIGKILL.
+local KILL_ESCALATION_MS = 1000
+
 local function reap_debuggee()
     local proc = debuggee
     debuggee = nil
@@ -47,7 +53,18 @@ local function reap_debuggee()
     end
 
     if proc:is_running() then
-        proc:kill()
+        proc:kill(SIGTERM)
+        -- Bounded escalation: if the child ignores SIGTERM, SIGKILL it.
+        -- Without this, proc:wait() below blocks forever on a
+        -- TERM-trapping child, hanging adapter shutdown.
+        waited = 0
+        while proc:is_running() and waited < KILL_ESCALATION_MS do
+            net.update(REAP_POLL_MS)
+            waited = waited + REAP_POLL_MS
+        end
+        if proc:is_running() then
+            proc:kill(SIGKILL)
+        end
     end
 
     proc:wait()
@@ -78,6 +95,76 @@ local disconnect_acked = false
 ---@return string address Backend unix-socket rendezvous address.
 local function getUnixAddress(pid)
     return ('@$tmp/luadbg_%s'):format(pid)
+end
+
+---Remove stale `/tmp/luadbg_*` rendezvous sockets left by crashed sessions.
+---Old-style `luadbg_<pid>` is stale when `/proc/<pid>` is gone.
+---New-style `luadbg_<hex>` is stale when older than one hour.
+---Uses bee.filesystem only (no shell); best-effort, never fails startup.
+local function cleanup_stale_sockets()
+    local ok, err = pcall(function()
+        local fs = require('bee.filesystem')
+        if platform_os() == 'windows' then
+            return
+        end
+        local tmpdir = fs.path(fs.temp_directory_path():string():gsub('([/\\])$', ''))
+        local now = os.time()
+        for path in fs.pairs(tmpdir) do
+            local name = path:filename():string()
+            local pid = name:match('^luadbg_(%d+)$')
+            if pid then
+                -- Old style: PID gone => stale.
+                if not fs.exists(fs.path('/proc') / pid) then
+                    fs.remove(path)
+                end
+            else
+                local hex = name:match('^luadbg_(%x+)$')
+                if hex and #hex == 32 then
+                    -- New style: older than 1h => stale.
+                    local mtime = fs.last_write_time(path)
+                    if mtime and (now - mtime) > 3600 then
+                        fs.remove(path)
+                    end
+                end
+            end
+        end
+    end)
+    if not ok then
+        print(('[warn] stale socket cleanup failed: %s'):format(tostring(err)))
+    end
+end
+
+---Generate a cryptographically random hex string for socket names.
+---@param nbytes integer Number of random bytes (hex length is 2x).
+---@return string hex Hex-encoded random bytes.
+local function random_hex(nbytes)
+    local f = io.open('/dev/urandom', 'rb')
+    if f then
+        local bytes = f:read(nbytes)
+        f:close()
+        if bytes and #bytes == nbytes then
+            return (bytes:gsub('.', function(c)
+                return ('%02x'):format(c:byte())
+            end))
+        end
+    end
+    -- Fallback: pid + time + math.random (not cryptographic, but better
+    -- than fully predictable). /dev/urandom should always exist on Linux.
+    local parts = {}
+    for _ = 1, nbytes do
+        parts[#parts + 1] = ('%02x'):format(math.random(0, 255))
+    end
+    return table.concat(parts)
+end
+
+---Generate an unpredictable rendezvous socket address for launch.
+---The frontend creates the name and passes it to the backend via spawn
+---params, so both sides agree without the name being predictable.
+---Prevents a local attacker from pre-binding the socket to harvest
+---launch configuration secrets.
+---@return string address Randomized unix-socket rendezvous address.
+local function getRandomUnixAddress()
+    return ('@$tmp/luadbg_%s'):format(random_hex(16))
 end
 
 ---@param pid integer Target process id.
@@ -130,6 +217,25 @@ local function check_launch_args(pkg)
         and type(args.program) ~= 'string'
     then
         return nil, 'missing `program` for launch.'
+    end
+    -- Strip dynamic-linker env vars that allow arbitrary code to run in
+    -- the debuggee before the Lua bootstrap (and before the debugger
+    -- attaches). A malicious workspace launch.json could set LD_PRELOAD
+    -- to a hostile .so; its constructor would run at exec time, invisible
+    -- to the debug session. These are stripped, not rejected: legitimate
+    -- uses are rare, and a loud log line beats a silent session break.
+    if type(args.env) == 'table' then
+        for _, key in ipairs({
+            'LD_PRELOAD',
+            'LD_LIBRARY_PATH',
+            'DYLD_INSERT_LIBRARIES',
+            'DYLD_LIBRARY_PATH',
+        }) do
+            if args.env[key] ~= nil then
+                print(('[security] stripped `%s` from launch env: dynamic-linker injection blocked'):format(key))
+                args.env[key] = nil
+            end
+        end
     end
     -- An empty program, or an absolute path that does not exist, is a
     -- certain launch failure; the backend would otherwise report success
@@ -298,9 +404,15 @@ local function create_server(args, pid)
         s = socket((args.client and 'connect:' or 'listen:') .. args.address)
         address = (args.client and 's:' or 'c:') .. args.address
     else
-        pid = pid or sp.get_id()
-        s = socket('connect:' .. getUnixAddress(pid))
-        address = pid
+        -- Randomized name prevents a local attacker from pre-binding the
+        -- predictable socket to harvest launch secrets. The frontend
+        -- generates the full address and passes it to the backend via
+        -- spawn params (role 's:' = backend listens, frontend connects).
+        -- (Attach still uses getUnixAddress(pid); it requires the injector
+        -- to already have code execution in the target.)
+        local sock_addr = getRandomUnixAddress()
+        s = socket('connect:' .. sock_addr)
+        address = 's:' .. sock_addr
     end
     return s, address
 end
@@ -559,6 +671,7 @@ end
 ---@param io table DAP transport (socket or stdio module).
 function m.init(io)
     client = io
+    cleanup_stale_sockets()
 end
 
 --- Shut down cleanly: close the backend connection (if any) and reap a

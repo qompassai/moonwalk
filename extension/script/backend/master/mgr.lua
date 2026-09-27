@@ -176,14 +176,33 @@ function mgr.setThreadStatus(threadId, status)
     end
 end
 
+-- Timestamp (os.clock) when terminate was requested, or nil. If workers
+-- are stopped at breakpoints they never process the disconnect broadcast,
+-- so the terminate callback never fires. This bounds the wait: after
+-- TERMINATE_TIMEOUT seconds, the master forces shutdown.
+local terminate_requested_at = nil
+local TERMINATE_TIMEOUT = 5.0
+
 function mgr.setTerminateDebuggeeCallback(callback)
     for _, s in pairs(threadStatus) do
         if s == 'connect' then
             terminateDebuggeeCallback = callback
+            terminate_requested_at = os.clock()
             return
         end
     end
     callback()
+end
+
+---Check if a pending terminate has timed out. Called from the main loop.
+---@return boolean timed_out True if terminate was requested and timed out.
+function mgr.checkTerminateTimeout()
+    if terminate_requested_at and terminateDebuggeeCallback then
+        if os.clock() - terminate_requested_at > TERMINATE_TIMEOUT then
+            return true
+        end
+    end
+    return false
 end
 
 function mgr.exitWorker(w)
@@ -224,6 +243,19 @@ local function update_redirect()
 end
 
 local function update_once()
+    -- If terminate was requested but workers are stuck (stopped at
+    -- breakpoints, never processing disconnect), force shutdown after
+    -- the timeout instead of leaking the session.
+    if mgr.checkTerminateTimeout() then
+        terminate_requested_at = nil
+        local cb = terminateDebuggeeCallback
+        terminateDebuggeeCallback = nil
+        if cb then
+            cb()
+        end
+        quit = true
+        return false
+    end
     local threadCMD = require('backend.master.threads')
     while true do
         local ok, w, cmd, msg = masterThread:pop()
@@ -274,6 +306,10 @@ function mgr.update()
     end
     local event = require('backend.master.event')
     event.terminated()
+    -- Flush before close: output events queued behind `terminated` must
+    -- reach the frontend, otherwise final program output is silently lost
+    -- in the termination race.
+    mgr.flushClient()
     socket.closeall()
     channel.destroy('DbgMaster')
 end

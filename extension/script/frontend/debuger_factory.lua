@@ -315,6 +315,9 @@ local function create_process_in_console(args, callback)
         cwd = args.cwd or fs.path(args.runtimeExecutable):parent_path(),
         suspended = true,
         searchPath = true,
+        -- If the adapter dies (even via SIGKILL), the kernel SIGTERMs the
+        -- debuggee. Prevents orphaned debuggees. (Linux only; no-op else.)
+        deathsig = true,
     })
     if not process then
         return nil, err

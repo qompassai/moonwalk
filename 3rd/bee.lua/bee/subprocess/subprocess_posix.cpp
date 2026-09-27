@@ -7,6 +7,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
 #include <spawn.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -114,6 +117,10 @@ namespace bee::subprocess {
 #endif
     }
 
+    void spawn::deathsig() noexcept {
+        deathsig_ = true;
+    }
+
     file_handle create_nul_file(bool read) noexcept {
         int fd = ::open("/dev/null", read ? O_RDONLY : O_WRONLY);
         if (fd < 0) {
@@ -157,6 +164,9 @@ namespace bee::subprocess {
         }
         args.push(nullptr);
 #if defined(USE_POSIX_SPAWN)
+        // PR_SET_PDEATHSIG requires fork(); posix_spawn cannot set it,
+        // so deathsig requests fall through to the fork() path below.
+        if (!deathsig_) {
         posix_spawn_file_actions_t actions;
         if (int err = posix_spawn_file_actions_init(&actions)) {
             errno = err;
@@ -207,12 +217,20 @@ namespace bee::subprocess {
             }
         }
         return true;
-#else
+        }
+#endif
         pid_t pid = fork();
         if (pid == -1) {
             return false;
         }
         if (pid == 0) {
+#if defined(__linux__)
+            if (deathsig_) {
+                // Kill this child with SIGTERM if the adapter dies,
+                // even via SIGKILL. Prevents orphaned debuggees.
+                prctl(PR_SET_PDEATHSIG, SIGTERM);
+            }
+#endif
             // if (detached_) {
             //     setsid();
             // }
@@ -244,7 +262,6 @@ namespace bee::subprocess {
             }
         }
         return true;
-#endif
     }
 
     process::process(spawn& spawn) noexcept

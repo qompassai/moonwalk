@@ -72,6 +72,7 @@ namespace bee::subprocess {
         spawn() noexcept;
         void suspended() noexcept;
         void detached() noexcept;
+        void deathsig() noexcept;
         void redirect(stdio type, file_handle f) noexcept;
         void env(environment&& env) noexcept;
         bool exec(args_t& args, path_view cwd) noexcept;
@@ -81,5 +82,6 @@ namespace bee::subprocess {
         int fds_[3];
         pid_t pid_       = -1;
         short spawnattr_ = 0;
+        bool deathsig_   = false;
     };
 }
