@@ -23,6 +23,30 @@ end
 local is_windows = package.config:sub(1, 1) == '\\'
 local root = self_source:match('(.+)[/][^/]+$'):match('(.+)[/][^/]+$')
 
+--- Debug-hint registry (vendored `std._debug`, see `script/std/README.md`).
+--- Loaded with `dofile` on an absolute path because the host process's
+--- `package.path` is not under our control at this point. Every runtime
+--- argument check below consults `_debug.argcheck` before asserting.
+local _debug = dofile(root .. '/script/std/_debug.lua')
+
+--- Applies `MOONWALK_DEBUG` to the hint registry: `'safe'` enables every
+--- runtime check, `'fast'` disables them, unset (or `'default'`) keeps the
+--- upstream defaults. Anything else is a configuration error.
+local function apply_debug_env()
+    local mode = os.getenv('MOONWALK_DEBUG')
+    if mode == 'safe' then
+        _debug(true)
+    elseif mode == 'fast' then
+        _debug(false)
+    elseif mode == nil or mode == '' or mode == 'default' then
+        _debug()
+    else
+        error("bad MOONWALK_DEBUG (expected 'safe', 'fast' or 'default', got '" .. mode .. "')")
+    end
+end
+
+apply_debug_env()
+
 if debug.getregistry()['moonwalk'] then
     local dbg = debug.getregistry()['moonwalk']
     local empty = { root = dbg.root }
@@ -132,7 +156,9 @@ end
 ---@param cfg table Client config; `cfg.platform`, `cfg.luaVersion` optional.
 ---@return string luadebug_path Absolute path to luadebug.dll/.so.
 local function detect_luadebug_path(cfg)
-    assert(type(cfg) == 'table')
+    if _debug.argcheck then
+        assert(type(cfg) == 'table')
+    end
     local platform_name = cfg.platform or os.getenv('MOONWALK_PLATFORM')
     if not platform_name then
         platform_name = detect_host_platform()
@@ -176,7 +202,9 @@ local function init_debugger(dbg, cfg)
     if type(cfg) == 'string' then
         cfg = { address = cfg }
     end
-    assert(type(cfg) == 'table')
+    if _debug.argcheck then
+        assert(type(cfg) == 'table')
+    end
 
     local luadebug_path = os.getenv('MOONWALK_CORE')
     local update_env = false
