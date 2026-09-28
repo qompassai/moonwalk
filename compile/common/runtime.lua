@@ -139,7 +139,7 @@ for _, luaver in ipairs({
                 },
                 sources = {
                     '3rd/lua/' .. luaver .. '/lua.c',
-                    'compile/windows/lua-debug.rc',
+                    'compile/windows/moonwalk.rc',
                 },
                 defines = {
                     luaver == 'lua51' and '_CRT_SECURE_NO_WARNINGS',

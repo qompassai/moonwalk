@@ -20,12 +20,12 @@ lm:build('x86_64')({
 })
 
 lm:import('compile/common/bee.lua')
-require('compile.common.lua-debug')
+require('compile.common.moonwalk')
 
 lm:default({
     'common',
     lm.mode ~= 'debug' and 'copy_vcredist',
-    'lua-debug',
+    'moonwalk',
     'launcher',
     'runtime',
     'x86_64',

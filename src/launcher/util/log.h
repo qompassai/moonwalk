@@ -19,7 +19,7 @@ namespace luadebug::log {
 
     template <typename... T>
     inline void error(std::format_string<T...> fmt, T&&... args) {
-        std::print(stderr, "[lua-debug][launcher]{}\n", std::format(fmt, std::forward<T>(args)...));
+        std::print(stderr, "[moonwalk][launcher]{}\n", std::format(fmt, std::forward<T>(args)...));
     }
 
 #if defined(LUADEBUG_ENABLE_LOG)

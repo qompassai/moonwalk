@@ -1,3 +1,5 @@
+-- Moonwalk adapter executable target (renamed from upstream lua-debug).
+-- Produces publish/bin/moonwalk (moonwalk.exe on Windows).
 local lm = require('luamake')
 
 if lm.os == 'windows' then
@@ -16,20 +18,20 @@ if lm.os == 'windows' then
     })
 end
 
-lm:executable('lua-debug')({
+lm:executable('moonwalk')({
     bindir = 'publish/bin/',
     deps = 'source_bootstrap',
     windows = {
         deps = 'source_inject',
         sources = {
-            'compile/windows/lua-debug.rc',
+            'compile/windows/moonwalk.rc',
         },
     },
     msvc = {
-        ldflags = '/IMPLIB:$obj/lua-debug.lib',
+        ldflags = '/IMPLIB:$obj/moonwalk.lib',
     },
     mingw = {
-        ldflags = '-Wl,--out-implib,$obj/lua-debug.lib',
+        ldflags = '-Wl,--out-implib,$obj/moonwalk.lib',
     },
     linux = {
         crt = 'static',

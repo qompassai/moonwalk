@@ -8,7 +8,7 @@ end
 
 lm.builddir = ('build/%s/%s'):format(lm.platform, lm.mode)
 lm:import('compile/common/bee.lua')
-require('compile.common.lua-debug')
+require('compile.common.moonwalk')
 
 lm.runtime_platform = lm.platform
 require('compile.macos.runtime')
@@ -66,7 +66,7 @@ end
 
 lm:default({
     'common',
-    'lua-debug',
+    'moonwalk',
     'runtime',
     'process_inject_helper',
     'merge_launcher',
