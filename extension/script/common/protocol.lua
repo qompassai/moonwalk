@@ -25,13 +25,15 @@ local HEADER_MAX = 8192
 --- payload when a full frame has arrived, or nil when more data is needed.
 ---
 --- The `while true` loop always terminates: every iteration either returns
---- (frame complete, header incomplete, or body incomplete) or consumes the
---- parsed header bytes off `s.bytes`, strictly shrinking the input.
+--- (frame complete, header incomplete, or body incomplete) or strictly
+--- shrinks `s.bytes` -- by consuming a parsed header, or by dropping a
+--- garbage prefix that precedes a valid header start.
 ---
 --- Malformed framing never throws: zero/negative/non-integer/oversized
---- lengths and non-DAP bytes reset the reassembly state (dropping the
---- garbage) and return nil, so one bad frame cannot kill the adapter or
---- latch a bogus `length` that pins memory.
+--- lengths and non-DAP bytes are dropped and return nil. A garbage prefix
+--- before a valid header is skipped -- the header is kept, not eaten with
+--- the garbage -- so one bad chunk cannot wedge the stream: the next valid
+--- frame still decodes, and no bogus `length` is ever latched.
 ---@param s table Reassembly state; mutated in place (`bytes`, `length`).
 ---@param bytes string Newly arrived raw bytes; nil means "drain only".
 ---@return string|nil payload One complete JSON payload, if available.
@@ -47,6 +49,28 @@ local function recv(s, bytes)
                 return res
             end
             return
+        end
+        -- A DAP header can only start at byte 1, so when the buffer does
+        -- not start with one, scan for a header start later in the buffer
+        -- and drop the garbage before it. Without this, a single
+        -- non-terminated garbage prefix makes the following valid header
+        -- fail the prefix check: the old code then skipped past that
+        -- header's separator, eating a good header as garbage, and every
+        -- later frame wedged the same way (recovery only via the 8 KiB
+        -- header cap). Dropping bytes before a found header start is safe:
+        -- they can never become a valid header. With no header start in
+        -- the buffer, either more bytes are still arriving (wait) or the
+        -- peer is not speaking DAP (drop at the cap, as before).
+        if s.bytes:sub(1, 16) ~= 'Content-Length: ' then
+            local hdr = s.bytes:find('Content-Length: ', 2, true)
+            if hdr then
+                s.bytes = s.bytes:sub(hdr)
+            elseif #s.bytes > HEADER_MAX then
+                s.bytes = ''
+                return
+            else
+                return
+            end
         end
         local pos = s.bytes:find('\r\n\r\n', 1, true)
         if not pos then
@@ -67,7 +91,10 @@ local function recv(s, bytes)
             -- Not a DAP frame: skip past the bad separator and rescan, so
             -- valid frames already sitting in the same read are not lost
             -- with the garbage. The loop always terminates: each pass
-            -- strictly shrinks s.bytes.
+            -- strictly shrinks s.bytes. (The garbage pre-scan above
+            -- guarantees the `Content-Length: ` prefix here, so the
+            -- prefix/pos checks below are defensive; only a malformed
+            -- length can still reach this branch.)
             s.bytes = s.bytes:sub(pos + 4)
             s.length = nil
         else

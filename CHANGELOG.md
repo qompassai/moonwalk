@@ -64,16 +64,18 @@ All notable changes to this project are recorded here.
 - `test/run.lua`: single project entry point dispatching the unit, native,
   DAP, and fuzz stages, reporting PASS/FAIL/BLOCKED per stage.
 
-### Known findings (documented, not changed)
+### Fixed findings (was: known findings, documented not changed)
 
-- The DAP framing layer (`extension/script/common/protocol.lua`) does not
-  resynchronize after a non-terminated garbage prefix: the
-  `Content-Length: ` prefix check is anchored at the buffer start, so one
-  malformed chunk can wedge the stream until the 8 KiB header cap drops
-  the buffer. This is verified by unit test MW-PROTO-A05 and documented
-  in `test/fuzz/protocol_fuzz.cpp`, which traps on the wedge by design.
-  The parser is frozen wire code (header comment: restyle only), so no
-  behavior change was made; fixing the resync policy needs Matt's call.
+- The DAP framing layer (`extension/script/common/protocol.lua`) now
+  resynchronizes after a non-terminated garbage prefix: when the buffer
+  does not start with `Content-Length: `, the parser scans for a header
+  start later in the buffer and drops the garbage before it, instead of
+  anchoring the prefix check at the buffer start (which ate the following
+  valid header and wedged the stream until the 8 KiB header cap). Fixed
+  2026-09-28 on Matt's explicit authorization; verified by new unit tests
+  MW-PROTO-V10/V11/A09/A10 and the updated MW-PROTO-A05 policy, and
+  mirrored in the `test/fuzz/protocol_fuzz.cpp` reference stub (whose
+  wedge trap now guards the fix).
 
 ### Test-balance policy
 

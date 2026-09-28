@@ -15,21 +15,25 @@
 //     * RECOVERY: "one bad frame cannot kill the adapter" -- after arbitrary
 //       hostile input, subsequently fed valid frames must still be delivered
 //
-// KNOWN FINDING (verified 2026-09-28 against the real protocol.lua with
-// Lua 5.4.8): the recovery contract is CURRENTLY VIOLATED. A chunk shaped
+// KNOWN FINDING -- FIXED 2026-09-28 (was verified 2026-09-28 against the
+// real protocol.lua with Lua 5.4.8): the recovery contract was violated by
+// a garbage-prefix desync. A chunk shaped
 // `oops\r\n\r\n{separator-free bytes}` -- i.e. a `\r\n\r\n` followed by
-// non-header bytes with no separator -- permanently desyncs the stream:
-// the resync path skips past the bad separator but buffers the trailing
-// non-header bytes, and every later valid frame then fails the
-// "starts with Content-Length: " prefix check and is eaten as garbage.
+// non-header bytes with no separator -- permanently desynced the stream:
+// the resync path skipped past the bad separator but buffered the trailing
+// non-header bytes, and every later valid frame then failed the
+// "starts with Content-Length: " prefix check and was eaten as garbage.
 // Repro: feed "oops\r\n\r\n{bare-body-no-separator}", then valid frames:
 // 0/5 delivered, forever. The same-read resync (garbage AND a valid frame
 // in one recv call, cf. test/dap/corpus/garbage_prefix.bin) still works;
 // the wedge needs the garbage to arrive in an earlier read than the frame.
 // Impact: one malformed chunk from a buggy/malicious client wedges the
 // session -- every later request times out. This target TRAPS on the wedge
-// (message: "framing layer wedged"), against the stub AND, once wired,
-// against the real code, until the adapter is fixed.
+// (message: "framing layer wedged") against the stub AND, once wired,
+// against the real code. The Lua parser now pre-scans for a
+// `Content-Length: ` header start and drops the garbage before it (see
+// extension/script/common/protocol.lua), so the wedge is gone; the stub
+// below mirrors the FIXED behavior and the trap now guards the fix.
 //
 // HOW TO BUILD (once the repo builds)
 //   clang++ -std=c++17 -fsanitize=fuzzer,address protocol_fuzz.cpp -o protocol_fuzz
@@ -87,10 +91,11 @@ struct FeedResult {
 // fill in FeedResult as documented in the file header.
 //
 // REFERENCE STUB (active now): a line-for-line model of the CURRENT Lua
-// `recv`, wedge included. STUB SIMPLIFICATION: the real recv parses the
-// length with tonumber() (accepts "0x10", "1e3", surrounding space); the
-// stub accepts strict ASCII digits only. Both reject-or-accept without
-// throwing, which is all the invariants below depend on.
+// `recv`, including the 2026-09-28 garbage-prefix resync fix. STUB
+// SIMPLIFICATION: the real recv parses the length with tonumber() (accepts
+// "0x10", "1e3", surrounding space); the stub accepts strict ASCII digits
+// only. Both reject-or-accept without throwing, which is all the
+// invariants below depend on.
 //===----------------------------------------------------------------------===//
 #define MOONWALK_FUZZ_REFERENCE_STUB 1
 
@@ -128,6 +133,22 @@ FeedResult MoonwalkFeedFraming(const uint8_t* data, size_t size) {
             }
             break;
         }
+        // Garbage-prefix resync (mirrors the fixed Lua recv): a DAP header
+        // can only start at the buffer start, so scan for a header start
+        // later in the buffer and drop the garbage before it. With no
+        // header start present, wait for more bytes, or drop at the cap.
+        if (g_stub.bytes.compare(g_stub.cursor, 16, "Content-Length: ") != 0) {
+            size_t hdr = g_stub.bytes.find("Content-Length: ", g_stub.cursor + 1);
+            if (hdr != std::string::npos) {
+                g_stub.cursor = hdr;
+            } else {
+                if (buffered(g_stub) > kHeaderMax) {
+                    g_stub.bytes.clear();
+                    g_stub.cursor = 0;
+                }
+                break;
+            }
+        }
         size_t pos = g_stub.bytes.find("\r\n\r\n", g_stub.cursor);
         if (pos == std::string::npos) {
             if (buffered(g_stub) > kHeaderMax) {
@@ -153,9 +174,10 @@ FeedResult MoonwalkFeedFraming(const uint8_t* data, size_t size) {
             }
             ok = ok && length >= 1 && length <= kFrameMax;
         }
-        // Malformed: skip past the bad separator and rescan (mirrors the
-        // real recv, including its cross-read desync behavior -- see the
-        // KNOWN FINDING note in the file header).
+        // Malformed header (bad length): skip past the bad separator and
+        // rescan (mirrors the real recv). The garbage pre-scan above
+        // guarantees the prefix here, so this branch only fires on a
+        // malformed length; a valid frame later in the buffer is kept.
         g_stub.cursor = pos + 4;
         if (ok) {
             g_stub.has_length = true;

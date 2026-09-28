@@ -303,20 +303,20 @@ T('MW-PROTO-A05 garbage recovery follows the documented policy', 'adversarial', 
         ctx:check(ok, 'no exception: ' .. tostring(got))
         ctx:check(#got == 1 and got[1].seq == 99, 'separator-terminated garbage recovers')
     end
-    -- Policy 2: the `Content-Length: ` prefix check is anchored at the
-    -- start of the buffer, so a non-terminated garbage prefix causes the
-    -- following frame's header to be rejected too. No crash, no unbounded
-    -- growth; the 8 KiB header cap is the reset mechanism.
+    -- Policy 2 (resync fix, 2026-09-28): a non-terminated garbage prefix
+    -- is dropped and the following valid frame decodes immediately. The
+    -- parser scans for a `Content-Length: ` header start instead of
+    -- anchoring the prefix check at the buffer start, so one malformed
+    -- chunk can no longer wedge the stream (previously the valid header
+    -- was eaten as garbage and recovery needed the 8 KiB header cap).
     do
         local stat = new_stat()
         local ok, got = pcall(feed, stat, 'GARBAGE' .. good)
         ctx:check(ok, 'no exception on garbage prefix: ' .. tostring(got))
-        ctx:check(#got == 0, 'frame dropped per anchored-prefix policy (documented)')
-        ctx:check(#stat.bytes <= 8192, 'buffer stays bounded')
-        feed(stat, string.rep('Z', 8193)) -- trip the header cap
-        ctx:check(#stat.bytes == 0, 'header cap drops the desynced buffer')
+        ctx:check(#got == 1 and got[1].seq == 99, 'frame after garbage prefix decodes immediately')
+        ctx:check(#stat.bytes == 0, 'garbage prefix dropped, buffer drained')
         local after = feed(stat, good)
-        ctx:check(#after == 1 and after[1].seq == 99, 'parser usable after reset')
+        ctx:check(#after == 1 and after[1].seq == 99, 'stream continues normally')
     end
     -- Policy 1, fuzzed: random separator-terminated garbage always recovers.
     local next = rng(777)
@@ -376,6 +376,67 @@ T('MW-PROTO-A08 one byte at a time stays bounded and completes', 'adversarial', 
     end
     ctx:check(done, 'message completed')
     ctx:check(peak <= #frame, 'buffer never exceeded the frame itself')
+end)
+
+T('MW-PROTO-V10 garbage prefix does not eat the following frame', 'validation', function(ctx)
+    -- A non-terminated garbage prefix immediately followed by a valid
+    -- frame: the garbage is dropped, the frame is decoded. (Regression
+    -- test for the resync fix: the old code anchored the prefix check at
+    -- the buffer start, so the valid header was rejected as garbage and
+    -- its body wedged the stream.)
+    local stat = new_stat()
+    local good = protocol.send({ type = 'request', seq = 21, command = 'threads' }, {})
+    local got = feed(stat, 'GARBAGE' .. good)
+    ctx:check(#got == 1 and got[1].seq == 21, 'frame after a non-terminated garbage prefix is decoded')
+    ctx:check(#stat.bytes == 0, 'no garbage retained in the buffer')
+end)
+
+T('MW-PROTO-V11 stream survives garbage injected between frames', 'validation', function(ctx)
+    local stat = new_stat()
+    local msgs = {}
+    for i = 1, 5 do
+        msgs[i] = protocol.send({ type = 'request', seq = 100 + i, command = 'threads' }, {})
+    end
+    local got = {}
+    for i = 1, 5 do
+        for _, m in ipairs(feed(stat, 'zz' .. msgs[i])) do
+            got[#got + 1] = m
+        end
+    end
+    ctx:check(#got == 5, 'all five frames decoded despite garbage prefixes')
+    for i = 1, 5 do
+        ctx:check(got[i].seq == 100 + i, ('order preserved at %d'):format(i))
+    end
+    ctx:check(#stat.bytes == 0, 'buffer drained')
+end)
+
+T('MW-PROTO-A09 separator-terminated garbage in an earlier read does not wedge the stream', 'adversarial', function(ctx)
+    -- Exact repro from test/fuzz/protocol_fuzz.cpp: a chunk shaped
+    -- `oops\r\n\r\n{separator-free bytes}` arrives in an earlier read than
+    -- the valid frames. The old code skipped past the bad separator but
+    -- buffered the trailing bytes, so every later frame failed the
+    -- anchored prefix check and was eaten: 0/5 delivered, forever.
+    local stat = new_stat()
+    local ok, err = pcall(feed, stat, 'oops\r\n\r\nBAREBODY')
+    ctx:check(ok, 'no exception on garbage chunk: ' .. tostring(err))
+    for i = 1, 5 do
+        local good = protocol.send({ type = 'request', seq = 200 + i, command = 'threads' }, {})
+        local got = feed(stat, good)
+        ctx:check(#got == 1 and got[1].seq == 200 + i, ('frame %d delivered after garbage chunk'):format(i))
+    end
+    ctx:check(#stat.bytes <= 8192, 'buffer stays bounded')
+end)
+
+T('MW-PROTO-A10 garbage split across reads still resynchronizes', 'adversarial', function(ctx)
+    local stat = new_stat()
+    local good = protocol.send({ type = 'request', seq = 31, command = 'threads' }, {})
+    local ok = pcall(feed, stat, 'GARB')
+    ctx:check(ok, 'no exception on partial garbage')
+    ok = pcall(feed, stat, 'AGE' .. good:sub(1, 10))
+    ctx:check(ok, 'no exception on garbage plus partial frame')
+    local got = feed(stat, good:sub(11))
+    ctx:check(#got == 1 and got[1].seq == 31, 'frame decoded after cross-read garbage')
+    ctx:check(#stat.bytes <= 8192, 'buffer stays bounded')
 end)
 
 return tests
