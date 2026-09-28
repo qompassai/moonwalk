@@ -42,6 +42,20 @@ local function checkThreadId(req, threadId)
     return true
 end
 
+--- Returns `req.arguments` when it is a table; otherwise answers the
+--- request with exactly one unsuccessful DAP response and returns nil.
+--- Handlers must call this before dereferencing any argument: a malformed
+--- request must never raise a Lua error inside the adapter.
+---@param req table Incoming DAP request.
+---@return table|nil args Validated arguments table.
+local function checkArguments(req)
+    if type(req.arguments) ~= 'table' then
+        response.error(req, 'Missing or invalid `arguments`')
+        return nil
+    end
+    return req.arguments
+end
+
 function request.initialize(req)
     firstWorker = true
     mgr.setClient(req.arguments)
@@ -190,9 +204,38 @@ local function isValidPath(path)
 end
 
 function request.setBreakpoints(req)
-    local args = req.arguments
-    local invalidPath = args.source.path and not isValidPath(args.source.path)
-    for _, bp in ipairs(args.breakpoints) do
+    local args = checkArguments(req)
+    if not args then
+        return
+    end
+    if type(args.source) ~= 'table' then
+        response.error(req, 'Missing or invalid `source`')
+        return
+    end
+    if type(args.source.path) ~= 'string' and type(args.source.sourceReference) ~= 'number' then
+        response.error(req, 'Missing source `path` or `sourceReference`')
+        return
+    end
+    -- `breakpoints` is optional per DAP: absent means "clear all".
+    local breakpoints = args.breakpoints
+    if breakpoints == nil then
+        breakpoints = {}
+    elseif type(breakpoints) ~= 'table' then
+        response.error(req, 'Invalid `breakpoints`: expected an array')
+        return
+    end
+    local invalidPath = type(args.source.path) == 'string' and not isValidPath(args.source.path)
+    -- Validate the reference arithmetic inputs before answering: the
+    -- request must produce exactly one response, success or error.
+    if args.source.sourceReference and (type(args.source.sourceReference) ~= 'number' or math.type(args.source.sourceReference) ~= 'integer') then
+        response.error(req, 'Invalid `sourceReference`: expected an integer')
+        return
+    end
+    for _, bp in ipairs(breakpoints) do
+        if type(bp) ~= 'table' then
+            response.error(req, 'Invalid `breakpoints`: expected an array of objects')
+            return
+        end
         bp.column = nil
         bp.endColumn = nil
         bp.id = genBreakpointID()
@@ -201,7 +244,7 @@ function request.setBreakpoints(req)
             or 'Wait verify. (The source file is not loaded.)'
     end
     response.success(req, {
-        breakpoints = args.breakpoints,
+        breakpoints = breakpoints,
     })
     if invalidPath then
         return
@@ -213,22 +256,22 @@ function request.setBreakpoints(req)
         args.source.sourceReference = args.source.sourceReference & 0xFFFFFFFF
         config.breakpoints[sourceReference] = {
             args.source,
-            args.breakpoints,
+            breakpoints,
             content,
         }
         if state == 'initialized' then
-            initializeWorkerBreakpoints(w, args.source, args.breakpoints, content)
+            initializeWorkerBreakpoints(w, args.source, breakpoints, content)
         end
     else
         --TODO: should path matching ignore case?
         config.breakpoints[args.source.path] = {
             args.source,
-            args.breakpoints,
+            breakpoints,
             content,
         }
         if state == 'initialized' then
             for w in pairs(mgr.workers()) do
-                initializeWorkerBreakpoints(w, args.source, args.breakpoints, content)
+                initializeWorkerBreakpoints(w, args.source, breakpoints, content)
             end
         end
     end
@@ -359,9 +402,17 @@ function request.scopes(req)
 end
 
 function request.variables(req)
-    local args = req.arguments
-    local threadId = args.variablesReference >> 24
-    local valueId = args.variablesReference & 0x00FFFFFF
+    local args = checkArguments(req)
+    if not args then
+        return
+    end
+    local variablesReference = args.variablesReference
+    if type(variablesReference) ~= 'number' or math.type(variablesReference) ~= 'integer' then
+        response.error(req, 'Invalid `variablesReference`: expected an integer')
+        return
+    end
+    local threadId = variablesReference >> 24
+    local valueId = variablesReference & 0x00FFFFFF
     if not checkThreadId(req, threadId) then
         return
     end
@@ -471,14 +522,18 @@ function request.terminate(req)
 end
 
 function request.restart(req)
-    local args = req.arguments.arguments
+    -- `restart` takes no required arguments: a missing `arguments` table
+    -- (or a missing nested launch configuration) restarts with the current
+    -- session configuration instead of crashing on a nil index.
+    local args = req.arguments
+    local launchArgs = type(args) == 'table' and args.arguments or nil
     response.success(req)
     mgr.workerBroadcast({
         cmd = 'disconnect',
     })
     mgr.setTerminateDebuggeeCallback(function()
-        if args then
-            config.initialize = args
+        if launchArgs then
+            config.initialize = launchArgs
         end
         -- The old session's unattached children can never proceed past
         -- their wait gate; reap them before the new session starts.
@@ -491,7 +546,21 @@ function request.restart(req)
 end
 
 function request.terminateThreads(req)
-    local args = req.arguments
+    local args = checkArguments(req)
+    if not args then
+        return
+    end
+    if type(args.threadIds) ~= 'table' then
+        response.error(req, 'Invalid `threadIds`: expected an array')
+        return
+    end
+    -- Validate every id before touching the worker channels: an unknown
+    -- thread id would index a nil channel and kill the adapter.
+    for _, threadId in ipairs(args.threadIds) do
+        if not checkThreadId(req, threadId) then
+            return
+        end
+    end
     response.success(req)
     for _, w in ipairs(args.threadIds) do
         mgr.workerSend(w, {
@@ -662,8 +731,15 @@ function request.restartFrame(req)
 end
 
 function request.readMemory(req)
-    local args = req.arguments
+    local args = checkArguments(req)
+    if not args then
+        return
+    end
     local memoryReference = args.memoryReference
+    if type(memoryReference) ~= 'string' then
+        response.error(req, 'Error memoryReference')
+        return
+    end
     local threadId, refId = memoryReference:match('memory_(%d+)x(%d+)')
     threadId = tonumber(threadId)
     refId = tonumber(refId)
@@ -685,8 +761,15 @@ function request.readMemory(req)
 end
 
 function request.writeMemory(req)
-    local args = req.arguments
+    local args = checkArguments(req)
+    if not args then
+        return
+    end
     local memoryReference = args.memoryReference
+    if type(memoryReference) ~= 'string' then
+        response.error(req, 'Error memoryReference')
+        return
+    end
     local threadId, refId = memoryReference:match('memory_(%d+)x(%d+)')
     threadId = tonumber(threadId)
     refId = tonumber(refId)
@@ -709,8 +792,15 @@ function request.writeMemory(req)
 end
 
 function request.disassemble(req)
-    local args = req.arguments
+    local args = checkArguments(req)
+    if not args then
+        return
+    end
     local memoryReference = args.memoryReference
+    if type(memoryReference) ~= 'string' then
+        response.error(req, 'Invalid memoryReference')
+        return
+    end
     -- inst_<threadId>x<rest> (from instructionPointerReference)
     local threadId, refId = memoryReference:match('inst_(%d+)x(.+)$')
     if not refId then

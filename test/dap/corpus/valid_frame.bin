@@ -1,0 +1,7 @@
+Content-Length: 104
+
+{"type":"request","seq":1,"command":"initialize","arguments":{"adapterID":"corpus","pathFormat":"path"}}Content-Length: 130
+
+{"type":"response","seq":2,"request_seq":1,"command":"initialize","success":true,"body":{"supportsConfigurationDoneRequest":true}}Content-Length: 46
+
+{"type":"event","seq":3,"event":"initialized"}

@@ -1,0 +1,28 @@
+# Byte offsets into valid_frame.bin at which a fuzzer/harness may split the
+# byte stream to simulate TCP/pipe fragmentation.
+#
+# The file holds 3 frames (348 bytes total). Real frame boundaries:
+#   frame 1 (initialize request):  header bytes 0..22,   body 23..126
+#   frame 2 (initialize response): header bytes 127..149, body 150..279
+#   frame 3 (initialized event):   header bytes 280..301, body 302..347
+#
+# Interesting split positions (one per line; comments after #):
+1        # inside the "Content-Length:" prefix
+16       # right after the prefix, before the digits
+18       # inside the length digits
+21       # between digits and \r\n\r\n
+22       # inside the \r\n\r\n separator
+23       # first byte of the JSON body
+60       # mid-body of frame 1
+126      # last byte of frame 1 body (boundary: body vs next header)
+127      # first byte of frame 2 header
+200      # mid-body of frame 2
+279      # last byte of frame 2 body
+280      # first byte of frame 3 header
+320      # mid-body of frame 3
+347      # final byte of the stream
+#
+# Usage: pick K positions (seeded), split the file there, feed the pieces
+# with pauses in between. The framing layer must reassemble the exact same
+# 3 payloads regardless of split points. Positions are stable for the fixed
+# PR seed; nightly runs may add positions derived from the rotating seed.

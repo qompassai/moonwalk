@@ -7,6 +7,7 @@
 -- called from main.lua.
 
 local socket = require('common.socket')
+local log = require('common.log')
 local net = require('common.net')
 local debuger_factory = require('frontend.debuger_factory')
 local fs = require('bee.filesystem')
@@ -158,7 +159,10 @@ local function cleanup_stale_sockets()
         end
     end)
     if not ok then
-        print(('[warn] stale socket cleanup failed: %s'):format(tostring(err)))
+        -- Never `print()` here: stdout is the DAP channel in stdio mode,
+        -- and unframed bytes corrupt the protocol stream. The log module
+        -- (required above) already redirects stray prints to the log file.
+        log.warn('stale socket cleanup failed: ' .. tostring(err))
     end
 end
 
@@ -260,7 +264,9 @@ local function check_launch_args(pkg)
             'DYLD_LIBRARY_PATH',
         }) do
             if args.env[key] ~= nil then
-                print(('[security] stripped `%s` from launch env: dynamic-linker injection blocked'):format(key))
+                -- Diagnostics go to the log file (stderr-safe), never to
+                -- stdout: in stdio mode stdout carries only DAP frames.
+                log.warn(('stripped `%s` from launch env: dynamic-linker injection blocked'):format(key))
                 args.env[key] = nil
             end
         end

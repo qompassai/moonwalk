@@ -1,0 +1,20 @@
+# Content-Length values the framing layer must REJECT without throwing,
+# without pinning memory, and without killing the session. Each line is one
+# header value to place after "Content-Length: " (then \r\n\r\n).
+#
+# Format: <value> # <why it must be rejected>
+0                    # zero-length body: rejected (length < 1)
+-5                   # negative: rejected
+1.5                  # non-integer: rejected
+abc                  # non-numeric: rejected
+                     # empty: rejected
+16777216             # exactly 16 MiB: boundary, ACCEPTED (FRAME_MAX)
+16777217             # 16 MiB + 1: rejected (over FRAME_MAX)
+99999999999999999999 # huge: rejected, must not allocate
+0x10                 # hex-looking: rejected (not decimal digits)
+  42                 # leading space: rejected (strict prefix match)
+42                   # sane value: ACCEPTED (control)
+#
+# Contract under test (extension/script/common/protocol.lua): a rejected
+# length resets the reassembly state and returns nil; a valid frame already
+# queued behind the garbage in the same read must still be delivered.

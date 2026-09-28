@@ -156,8 +156,6 @@ attributes.common = {
             'lua52',
             'lua53',
             'lua54',
-            'lua55',
-            'lua-latest',
             'luajit',
         },
         markdownDescription = '%lua.debug.launch.luaVersion.description%',

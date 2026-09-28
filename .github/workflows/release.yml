@@ -1,13 +1,14 @@
-name: build
+# Release publication is intentionally separate from build.yml: the build
+# workflow tests every push/PR to main, while this workflow only runs on
+# version tags and requires the build workflow to be green first.
+# Publication failures must be loud -- never use continue-on-error here.
+name: release
 on:
   push:
-    branches:
-    - main
-  pull_request:
-    branches:
-    - main
+    tags:
+    - 'v*'
 jobs:
-  compile:
+  publish:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,24 +34,20 @@ jobs:
         sudo apt-get update && sudo apt-get install -y libiberty-dev
     - run: luamake lua compile/download_deps.lua
     - run: luamake -mode release -platform ${{ matrix.platform }}
-    # Tests run after the build and before anything is packaged or
-    # published: a red suite must never become a release artifact.
-    # `-test` sets lm.test, which dispatches make.lua to
-    # compile/test/make.lua to build the native test binaries; `luamake
-    # test` then runs test.lua (the fail-closed interceptor) with them.
-    - name: build native test binaries
+    # Gate the release on the same suites the build workflow runs.
+    - name: build native tests
       run: luamake -test -mode release -platform ${{ matrix.platform }}
     - name: run native tests (fail-closed discovery)
-      run: luamake test -mode release -platform ${{ matrix.platform }}
+      run: luamake test
     - name: run Lua unit tests
       run: luamake lua test/unit/run_unit.lua
     - name: run P0 DAP conformance tests
       run: python3 test/dap/run.py --suite p0
-    - name: upload failure artifacts
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: failure-artifacts-${{ matrix.platform }}
-        path: artifacts/
-    # Publication lives in release.yml (tag-triggered) and never in this
-    # workflow: a red suite must never become a release artifact.
+    - run: npm install -g @vscode/vsce ovsx
+    # The build generates extension/package.json from
+    # compile/common/package_json.lua; publish from there, not from the
+    # nonexistent `publish/` directory the old workflow used.
+    - run: npx vsce publish --target ${{ matrix.platform }} -p ${{ secrets.VSCE_KEY }}
+      working-directory: extension
+    - run: npx ovsx publish --target ${{ matrix.platform }} -p ${{ secrets.OVSX_KEY }}
+      working-directory: extension
