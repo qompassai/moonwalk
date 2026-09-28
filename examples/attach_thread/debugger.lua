@@ -5,7 +5,7 @@ local function dofile(filename)
     return assert(load(str, '=(debugger.lua)'))(filename)
 end
 
-local path = os.getenv('LUA_DEBUG_PATH')
+local path = os.getenv('MOONWALK_PATH')
 if path then
     return dofile(path .. '/script/debugger.lua'):attach({})
 end

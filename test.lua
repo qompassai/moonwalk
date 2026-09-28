@@ -1,4 +1,4 @@
--- Moonwalk (lua-debug) test entry point.
+-- Moonwalk test entry point.
 -- On macOS it runs the inject/waitdll harnesses first, then the
 -- interceptor that executes every built test binary.
 local platform_os = require('bee.platform').os

@@ -1,7 +1,7 @@
-# TODO: make lua-debug a reliable Neovim debugger
+# TODO: make moonwalk a reliable Neovim debugger
 
-Repository: [qompassai/lua-debug](https://github.com/qompassai/lua-debug).
-Reviewed source: [`d80654e613e13b7ca79a64c038541f9386cd75b3`](https://github.com/qompassai/lua-debug/tree/d80654e613e13b7ca79a64c038541f9386cd75b3).
+Repository: [qompassai/moonwalk](https://github.com/qompassai/moonwalk).
+Reviewed source: [`d80654e613e13b7ca79a64c038541f9386cd75b3`](https://github.com/qompassai/moonwalk/tree/d80654e613e13b7ca79a64c038541f9386cd75b3).
 The downloaded source archive identifies that exact commit. The local build tree
 shown in the request was used for context; its binaries were not executed.
 This is a source-reviewed implementation checklist, not a claim of completed
@@ -16,7 +16,7 @@ acceptance tests.
 
 | Component | Existing implementation | Action |
 | --- | --- | --- |
-| Standalone adapter | `compile/common/lua-debug.lua` builds `publish/bin/lua-debug` | Reuse and package it |
+| Standalone adapter | `compile/common/moonwalk.lua` builds `publish/bin/moonwalk` | Reuse and package it |
 | Stdio transport | `extension/script/frontend/main.lua` chooses `frontend.stdio` when no port is supplied | Harden and test it |
 | DAP framing | `extension/script/common/protocol.lua` handles Content-Length and JSON | Bound and validate it |
 | TCP frontend | A positional port selects a listener on `127.0.0.1` | Keep optional; do not confuse it with the debuggee connection |
@@ -25,9 +25,9 @@ acceptance tests.
 | Runtime builds | `compile/common/runtime.lua` builds Lua 5.1–5.5, LuaJIT and lua-latest variants | Start with Linux x64 Lua 5.4 and LuaJIT |
 | Non-extension bootstrap | `examples/standalone/debugger.lua` loads `publish/script/debugger.lua` | Extend into editor-independent examples |
 
-Source: [build target](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/compile/common/lua-debug.lua),
-[frontend](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/frontend/main.lua),
-[runtime builds](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/compile/common/runtime.lua).
+Source: [build target](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/compile/common/moonwalk.lua),
+[frontend](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/frontend/main.lua),
+[runtime builds](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/compile/common/runtime.lua).
 
 Do not replace DAP with LSP or Neovim RPC. Neovim RPC can help launch or control
 a test Neovim process, but debugger requests still travel over DAP. Do not load
@@ -53,7 +53,7 @@ LuaJIT runtime are different execution environments.
   with an argv list, pipes and a controlled working directory. Keep the adapter
   off a PTY; terminal newline transformations can corrupt its protocol.
 - [ ] Add the integration as a small module, for example a proposed
-  `integrations/neovim/lua_debug.lua`. Install it into the existing configuration's
+  `integrations/neovim/moonwalk.lua`. Install it into the existing configuration's
   module structure without replacing its shared DAP loader.
 
 Acceptance: a headless client sends `initialize` to the adapter and parses one
@@ -99,8 +99,8 @@ Acceptance: a minimal launch succeeds without VS Code defaults, and a request
 without `arguments.request` neither hangs nor disappears. Malformed config
 fails before any debuggee is spawned.
 
-Evidence: [frontend dispatch](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/frontend/proxy.lua),
-[current resolver](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/backend/master/resolve_config.lua).
+Evidence: [frontend dispatch](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/frontend/proxy.lua),
+[current resolver](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/backend/master/resolve_config.lua).
 
 ### 3. Correct session sequencing and terminal negotiation
 
@@ -160,8 +160,8 @@ a client terminal refusal ends the launch with an error and leaves no retry loop
 Acceptance: stepping and variable inspection remain correct in a Neovim client
 that requests a full stack immediately instead of requesting one frame first.
 
-Evidence: [worker stack handling](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/backend/worker.lua),
-[variable presentation](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/backend/worker/variables.lua).
+Evidence: [worker stack handling](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/backend/worker.lua),
+[variable presentation](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/extension/script/backend/worker/variables.lua).
 
 ## P1 — make transport, installation and failure handling dependable
 
@@ -215,7 +215,7 @@ an adapter process that survives indefinitely after its client exits.
   including the launcher native code and the Lua-version handoff.
 - [ ] Use a private session directory under a validated `$XDG_RUNTIME_DIR` for
   Unix sockets/IPC, with a securely created private temporary-directory fallback.
-  Use `$XDG_STATE_HOME/lua-debug` or the documented XDG default for persistent logs.
+  Use `$XDG_STATE_HOME/moonwalk` or the documented XDG default for persistent logs.
 - [ ] Set explicit permissions, unique session identifiers, log size/retention
   limits and idempotent cleanup. Avoid PID-only predictable shared-temp paths;
   validate Unix socket path length before attempting to bind.
@@ -298,8 +298,8 @@ installation, without collisions or writes into `/usr` or the checkout.
 Acceptance: a clean headless build and staged Arch package work without VS Code,
 Node or marketplace credentials, and can execute from a read-only prefix.
 
-Evidence: [build workflow](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/.github/workflows/build.yml),
-[dependency preparation](https://github.com/qompassai/lua-debug/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/compile/download_deps.lua).
+Evidence: [build workflow](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/.github/workflows/build.yml),
+[dependency preparation](https://github.com/qompassai/moonwalk/blob/d80654e613e13b7ca79a64c038541f9386cd75b3/compile/download_deps.lua).
 
 ## P2 — debug Neovim's own embedded LuaJIT
 
@@ -318,8 +318,8 @@ A Lua file using `vim.api` must run inside Neovim, not the bundled standalone Lu
   symbol visibility, ABI, GC64 mode and any fork-specific patches. A directory
   named `luajit` does not prove compatibility; do not load a Lua 5.4 core into it.
 - [ ] Prefer explicit `platform`/runtime selection in the Neovim bootstrap to
-  shell-based uname discovery. Review existing `LUA_DEBUG_PLATFORM`,
-  `LUA_DEBUG_CORE` and `LUA_DEBUG_PATH` behavior before adding overlapping knobs.
+  shell-based uname discovery. Review existing `MOONWALK_PLATFORM`,
+  `MOONWALK_CORE` and `MOONWALK_PATH` behavior before adding overlapping knobs.
 - [ ] Document and test JIT-state changes. The existing LuaJIT detection path
   calls `jit.off()`; explicit runtime selection may take a different path.
   Define consistent behavior and restoration semantics instead of silently
@@ -397,7 +397,7 @@ local launch_arguments = {
 }
 ```
 
-Current adapter command: `/absolute/lua-debug/publish/bin/lua-debug`, no arguments
+Current adapter command: `/absolute/moonwalk/publish/bin/moonwalk`, no arguments
 for stdio. `--stdio`, `--root` or other new CLI flags are proposals only until
 implemented; the current bootstrap interprets its first argument as a port.
 Do not replace the adapter command with `/usr/bin/lua` or `nvim`.

@@ -1,7 +1,7 @@
 
 # What different?
 
-Patch luajit for [lua-debug](https://github.com/actboy168/lua-debug)
+Patch luajit for [moonwalk](https://github.com/qompassai/moonwalk)
 
 * changed marco LJ_STATIC_ASSERT to static_assert on msvc
 * add lua hook event:

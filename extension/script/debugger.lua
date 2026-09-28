@@ -23,8 +23,8 @@ end
 local is_windows = package.config:sub(1, 1) == '\\'
 local root = self_source:match('(.+)[/][^/]+$'):match('(.+)[/][^/]+$')
 
-if debug.getregistry()['lua-debug'] then
-    local dbg = debug.getregistry()['lua-debug']
+if debug.getregistry()['moonwalk'] then
+    local dbg = debug.getregistry()['moonwalk']
     local empty = { root = dbg.root }
     function empty:init()
         return self
@@ -58,7 +58,7 @@ end
 
 --- Runs `uname` to identify the host OS/arch triple, e.g. "linux-x64".
 ---
---- Only reached when neither `cfg.platform` nor `LUA_DEBUG_PLATFORM` pins
+--- Only reached when neither `cfg.platform` nor `MOONWALK_PLATFORM` pins
 --- the platform explicitly.
 ---@return string platform_name
 local function detect_host_platform()
@@ -133,7 +133,7 @@ end
 ---@return string luadebug_path Absolute path to luadebug.dll/.so.
 local function detect_luadebug_path(cfg)
     assert(type(cfg) == 'table')
-    local platform_name = cfg.platform or os.getenv('LUA_DEBUG_PLATFORM')
+    local platform_name = cfg.platform or os.getenv('MOONWALK_PLATFORM')
     if not platform_name then
         platform_name = detect_host_platform()
     end
@@ -164,13 +164,13 @@ local function detect_luadebug_path(cfg)
     return root .. runtime_subdir .. '/luadebug.' .. ext
 end
 
----@class LuaDebug
+---@class Moonwalk
 ---@field root string Extension root, UTF-8 on Windows unless `cfg.ansi`.
 ---@field address string|nil DAP endpoint address from the client config.
 ---@field rdebug table The loaded luadebug native module.
 
 --- Loads the native module into `dbg` and publishes the resolved paths to it.
----@param dbg LuaDebug Debugger handle to initialize.
+---@param dbg Moonwalk Debugger handle to initialize.
 ---@param cfg table|string Client config, or a bare address string.
 local function init_debugger(dbg, cfg)
     if type(cfg) == 'string' then
@@ -178,7 +178,7 @@ local function init_debugger(dbg, cfg)
     end
     assert(type(cfg) == 'table')
 
-    local luadebug_path = os.getenv('LUA_DEBUG_CORE')
+    local luadebug_path = os.getenv('MOONWALK_CORE')
     local update_env = false
     if not luadebug_path then
         luadebug_path = detect_luadebug_path(cfg)
@@ -188,13 +188,13 @@ local function init_debugger(dbg, cfg)
         assert(package.loadlib(luadebug_path, 'init'))(cfg.luaapi)
     end
 
-    ---@type LuaDebug
+    ---@type Moonwalk
     dbg.rdebug = assert(package.loadlib(luadebug_path, 'luaopen_luadebug'))()
-    if not os.getenv('LUA_DEBUG_PATH') then
-        dbg.rdebug.setenv('LUA_DEBUG_PATH', self_source)
+    if not os.getenv('MOONWALK_PATH') then
+        dbg.rdebug.setenv('MOONWALK_PATH', self_source)
     end
     if update_env then
-        dbg.rdebug.setenv('LUA_DEBUG_CORE', luadebug_path)
+        dbg.rdebug.setenv('MOONWALK_CORE', luadebug_path)
     end
 
     local function utf8(s)
@@ -211,7 +211,7 @@ local dbg = {}
 
 --- Starts a debug session against `cfg.address` (connect or listen mode).
 ---@param cfg table Client config; `cfg.client == true` selects connect mode.
----@return LuaDebug self
+---@return Moonwalk self
 function dbg:start(cfg)
     init_debugger(self, cfg)
 
@@ -225,7 +225,7 @@ end
 
 --- Attaches to an already-running process (no listen/connect handshake).
 ---@param cfg table|nil Client config.
----@return LuaDebug self
+---@return Moonwalk self
 function dbg:attach(cfg)
     init_debugger(self, cfg or {})
 
@@ -244,7 +244,7 @@ end
 
 --- Forwards a debugger event to the native module.
 ---@param ... any Event name followed by event arguments.
----@return LuaDebug self
+---@return Moonwalk self
 function dbg:event(...)
     self.rdebug.event(...)
     return self
@@ -253,7 +253,7 @@ end
 --- Installs a one-shot global `name` that forwards to `f` then emits `wait`.
 ---@param name string Global name to install.
 ---@param f function Callback invoked with the wait arguments.
----@return LuaDebug self
+---@return Moonwalk self
 function dbg:set_wait(name, f)
     _G[name] = function(...)
         _G[name] = nil
@@ -269,7 +269,7 @@ local patch_applied = false
 
 --- Patches global `pcall`/`xpcall`/`coroutine` so errors and thread
 --- switches surface as debugger events. Idempotent per process.
----@return LuaDebug self
+---@return Moonwalk self
 function dbg:setup_patch()
     -- A second call must not wrap the already-patched globals: that would
     -- stack another event layer on every error and thread switch.
@@ -316,6 +316,6 @@ function dbg:setup_patch()
     return self
 end
 
-debug.getregistry()['lua-debug'] = dbg
+debug.getregistry()['moonwalk'] = dbg
 
 return dbg

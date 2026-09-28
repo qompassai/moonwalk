@@ -2,7 +2,7 @@
 
 A brief overview of several ways to load the `luadebug` debugger.
 
-All parameters from the VS Code frontend are passed in full to the Lua Debug proxy process. That process is responsible for loading `lua-debug.so` / `lua-debug.dll` into the Lua virtual-machine environment.
+All parameters from the VS Code frontend are passed in full to the Moonwalk proxy process. That process is responsible for loading `luadebug.so` / `luadebug.dll` into the Lua virtual-machine environment.
 
 Parameter delivery occurs in two stages. During initialization, only some parameters are currently passed. In the second stage, after the debugger has loaded, all parameters are passed in the DAP protocol's `initialized` message.
 

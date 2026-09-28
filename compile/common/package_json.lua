@@ -4,10 +4,10 @@ platform = platform or 'unknown-unknown'
 local OS, ARCH = platform:match('^([^-]+)-([^-]+)$')
 
 local json = {
-    name = 'lua-debug',
+    name = 'moonwalk',
     version = '2.3.0',
-    publisher = 'actboy168',
-    displayName = 'Lua Debug',
+    publisher = 'qompassai',
+    displayName = 'Moonwalk',
     description = 'VSCode debugger extension for Lua',
     icon = 'images/logo.png',
     private = true,
@@ -15,11 +15,11 @@ local json = {
         name = 'actboy168',
     },
     bugs = {
-        url = 'https://github.com/actboy168/lua-debug/issues',
+        url = 'https://github.com/qompassai/moonwalk/issues',
     },
     repository = {
         type = 'git',
-        url = 'https://github.com/actboy168/lua-debug',
+        url = 'https://github.com/qompassai/moonwalk',
     },
     keywords = {
         'lua',
@@ -58,21 +58,21 @@ local json = {
         },
         commands = {
             {
-                command = 'extension.lua-debug.runEditorContents',
+                command = 'extension.moonwalk.runEditorContents',
                 icon = '$(play)',
                 title = 'Run File',
             },
             {
-                command = 'extension.lua-debug.debugEditorContents',
+                command = 'extension.moonwalk.debugEditorContents',
                 icon = '$(debug-alt-small)',
                 title = 'Debug File',
             },
             {
-                command = 'extension.lua-debug.showIntegerAsDec',
+                command = 'extension.moonwalk.showIntegerAsDec',
                 title = 'Show as Dec',
             },
             {
-                command = 'extension.lua-debug.showIntegerAsHex',
+                command = 'extension.moonwalk.showIntegerAsHex',
                 title = 'Show as Hex',
             },
         },
@@ -122,23 +122,23 @@ local json = {
         menus = {
             ['debug/variables/context'] = {
                 {
-                    command = 'extension.lua-debug.showIntegerAsDec',
+                    command = 'extension.moonwalk.showIntegerAsDec',
                     group = '1_view',
                     when = "debugConfigurationType == 'lua' && debugProtocolVariableMenuContext == 'integer/hex'",
                 },
                 {
-                    command = 'extension.lua-debug.showIntegerAsHex',
+                    command = 'extension.moonwalk.showIntegerAsHex',
                     group = '1_view',
                     when = "debugConfigurationType == 'lua' && debugProtocolVariableMenuContext == 'integer/dec'",
                 },
             },
             ['editor/title/run'] = {
                 {
-                    command = 'extension.lua-debug.runEditorContents',
+                    command = 'extension.moonwalk.runEditorContents',
                     when = 'resourceLangId == lua',
                 },
                 {
-                    command = 'extension.lua-debug.debugEditorContents',
+                    command = 'extension.moonwalk.debugEditorContents',
                     when = 'resourceLangId == lua',
                 },
             },
@@ -291,7 +291,7 @@ attributes.attach = {
 }
 
 json.contributes.debuggers[1].variables = {
-    pickProcess = 'extension.lua-debug.pickProcess',
+    pickProcess = 'extension.moonwalk.pickProcess',
 }
 
 attributes.launch = {

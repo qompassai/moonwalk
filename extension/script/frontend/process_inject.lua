@@ -255,7 +255,7 @@ function _M.macos_inject(process, entry, injectdll)
     p, err = sp.spawn({
         '/usr/bin/osascript',
         '-e',
-        ('do shell script "%s" with administrator privileges with prompt "lua-debug"'):format(
+        ('do shell script "%s" with administrator privileges with prompt "moonwalk"'):format(
             applescript_escape(cmd)
         ),
         stderr = true,

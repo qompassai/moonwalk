@@ -1,5 +1,5 @@
 # #################################################################
-# /qompassai/.GH/Qompass/Lua/lua-debug/.clangd
+# /qompassai/.GH/Qompass/Lua/moonwalk/.clangd
 # Qompass AI Config
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Qompass AI
@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # #################################################################
-# qompassai/lua-debug: clangd configuration for test/delayload.cpp.
+# qompassai/moonwalk: clangd configuration for test/delayload.cpp.
 # The project uses include paths relative to src/launcher, e.g.
 # #include <resolver/lua_delayload.h>.
 CompileFlags:
