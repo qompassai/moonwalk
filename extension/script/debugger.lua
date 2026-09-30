@@ -73,6 +73,11 @@ if debug.getregistry()['moonwalk'] then
         return self
     end
 
+    function empty:set_coroutine_parent(co, parent)
+        dbg:set_coroutine_parent(co, parent)
+        return self
+    end
+
     function empty:setup_patch()
         return self
     end
@@ -295,6 +300,16 @@ end
 --- without stacking another event layer on the patched functions.
 local patch_applied = false
 
+--- Assigns co's parent coroutine; the stack view splices the parent's
+--- frames after co's. A nil parent clears the assignment.
+---@param co thread Child coroutine in the debug target.
+---@param parent thread|nil Parent coroutine in the debug target, or nil.
+---@return Moonwalk self
+function dbg:set_coroutine_parent(co, parent)
+    self:event('setCoroutineParent', co, parent)
+    return self
+end
+
 --- Patches global `pcall`/`xpcall`/`coroutine` so errors and thread
 --- switches surface as debugger events. Idempotent per process.
 ---@return Moonwalk self
@@ -338,6 +353,17 @@ function dbg:setup_patch()
         return function(...)
             self:event('thread', co, 0)
             return coro_return(co, wf(...))
+        end
+    end
+
+    -- A closed coroutine has ended too; without this its parent links
+    -- would linger after close.
+    local raw_coroutine_close = coroutine.close
+    if raw_coroutine_close then
+        function coroutine.close(co)
+            local ok, err = raw_coroutine_close(co)
+            self:event('thread', co, 1)
+            return ok, err
         end
     end
 

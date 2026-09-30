@@ -355,7 +355,9 @@ end
 
 local function coroutineFrom(L)
     if hookmgr.coroutine_from then
-        return coroutineTree[L] or hookmgr.coroutine_from(L)
+        -- A manually assigned parent wins; then the native resume link;
+        -- then the Lua-side fallback table.
+        return hookmgr.coroutine_from(L) or coroutineTree[L]
     end
     return coroutineTree[L]
 end
@@ -389,11 +391,18 @@ function CMD.stackTrace(pkg)
     start = start + skipFrame
     local L = baseL
     local coroutineId = 0
+    local visited = {}
     local finish
     repeat
         hookmgr.sethost(L)
         local curL = L
         L = coroutineFrom(curL)
+        -- A manually assigned parent can form a cycle; stop the walk
+        -- instead of looping forever.
+        if visited[curL] then
+            break
+        end
+        visited[curL] = true
         if stackFrame[curL] == nil then
             local n
             finish, n = stackTrace(res, coroutineId, start, levels)
@@ -887,6 +896,9 @@ end
 
 local function runLoop(reason, level)
     baseL = hookmgr.gethost()
+    -- Drop any pending step hook: coroutines created while evaluating
+    -- expressions in the stopped state must not be single-stepped.
+    hookmgr.step_cancel()
     user_hooks.emit('pause', reason)
     sendToMaster('eventStop')(reason)
     skipFrame = level or 0
@@ -1200,13 +1212,29 @@ function event.thread(co, type)
     if not debuggeeReady() then
         return
     end
+    -- L is the coroutine that triggered the event: the caller (parent) of co.
     local L = hookmgr.gethost()
-    if co then
-        if type == 0 then
-            coroutineTree[L] = co
-        elseif type == 1 then
-            coroutineTree[co] = nil
+    if co and rdebug.threadptr then
+        -- An exit event can also be a plain yield; only a truly dead
+        -- coroutine breaks its manual parent links.
+        local dead = type == 1 and rdebug.costatus(co) == 'dead'
+        -- co arrives as a worker-side refvalue; convert it to the debug
+        -- target's address before using it as a map key or lua_State*.
+        co = rdebug.threadptr(co)
+        if co then
+            if type == 0 then
+                coroutineTree[co] = L
+                hookmgr.updatehookmask(co)
+                return
+            elseif type == 1 then
+                coroutineTree[co] = nil
+                if dead and hookmgr.coroutine_dead then
+                    hookmgr.coroutine_dead(co)
+                end
+            end
         end
+    elseif co then
+        log.debug('event.thread skipped: rdebug.threadptr is unavailable')
     end
     hookmgr.updatehookmask(L)
 end
@@ -1218,6 +1246,24 @@ end
 
 function event.setThreadName(name)
     sendToMaster('setThreadName')(name)
+end
+
+--- Records a manually assigned parent for co; nil parent clears it.
+---@param co thread Coroutine in the debug target.
+---@param parent thread|nil Parent coroutine in the debug target, or nil.
+function event.setCoroutineParent(co, parent)
+    if not debuggeeReady() then
+        return
+    end
+    if not (rdebug.threadptr and hookmgr.coroutine_setparent) then
+        return
+    end
+    -- co and parent live in the debug target; convert them to addresses so
+    -- the debugger side can identify them.
+    co = rdebug.threadptr(co)
+    if co then
+        hookmgr.coroutine_setparent(co, parent and rdebug.threadptr(parent))
+    end
 end
 
 function event.exit()

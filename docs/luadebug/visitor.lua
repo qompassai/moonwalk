@@ -296,6 +296,15 @@ function visitor.cleanwatch() end
 function visitor.costatus(co) end
 
 ---
+---@param co refvalue
+---@return lightuserdata?
+---Returns nil unless co is a thread, in which case it returns the
+---coroutine's address in the debug target. That address identifies the
+---coroutine across VMs.
+---
+function visitor.threadptr(co) end
+
+---
 ---@return integer
 ---Equivalent to `collectgarbage "count"`.
 ---

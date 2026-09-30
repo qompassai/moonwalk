@@ -126,8 +126,24 @@ function hookmgr.thread_open(enable) end
 ---
 ---@param co thread
 ---@return thread
----Returns the coroutine that resumed co (its caller).
+---Returns the coroutine that resumed co (its caller). A manually assigned
+---parent takes precedence over the resume relationship.
 ---
 function hookmgr.coroutine_from(co) end
+
+---
+---@param co lightuserdata
+---@param parent lightuserdata|nil
+---Manually assigns co's parent coroutine; nil clears it. co is a coroutine
+---identifier (see rdebug.threadptr).
+---
+function hookmgr.coroutine_setparent(co, parent) end
+
+---
+---@param co lightuserdata
+---Reports that co has ended; clears its mapping and every mapping that
+---points at it.
+---
+function hookmgr.coroutine_dead(co) end
 
 return hookmgr
