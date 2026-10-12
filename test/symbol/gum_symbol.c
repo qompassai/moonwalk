@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include <setjmp.h>
 #include <frida-gum.h>
 #include <stdio.h>
 

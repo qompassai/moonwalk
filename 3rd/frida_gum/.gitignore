@@ -1,5 +1,5 @@
 *.c
-!gumpp/internal/*.c
+!gumpp/src/internal/*.c
 *.sln
 *.vcxproj
 *.vcxproj.filters
@@ -8,4 +8,5 @@
 *.exe
 *.a
 *.h
+!gumpp/src/internal/**/*.h
 *.lib

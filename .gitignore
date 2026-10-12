@@ -26,3 +26,6 @@ publish/
 *.tar.gz
 *.tgz
 *.vsix
+
+# SCIP index (generated)
+/index.scip

@@ -4,7 +4,7 @@ require('compile.common.detect_platform')
 
 local arch = lm.arch
 if not arch then
-    arch = lm.runtime_platform:match('[%w]+-([%w]+)')
+    arch = lm.runtime_platform:match('[%w]+-([%w_]+)')
 end
 
 if arch == 'x64' then
