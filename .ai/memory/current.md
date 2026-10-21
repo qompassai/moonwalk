@@ -31,4 +31,4 @@ fix it, rebuild, republish, and re-run.
   (no re-asking). Diver pushes and any main promotion still need
   per-push confirmation.
 - Skill: `~/workspace/skills/moonwalk-debug/SKILL.md`.
-- Always run against Matt's most up-to-date Neovim config.
+- Always run against Owner's most up-to-date Neovim config.
